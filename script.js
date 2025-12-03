@@ -1,6 +1,7 @@
 const STORAGE_KEY = 'uk8ball-tracker';
 const GH_CONFIG_KEY = 'uk8ball-tracker-github';
 const AUTH_KEY = 'uk8ball-auth';
+const GOOGLE_CLIENT_STORAGE_KEY = 'uk8ball-google-client';
 
 const state = {
   players: [],
@@ -28,10 +29,10 @@ const gitHubSync = {
 };
 
 const authState = {
-  passcode: '',
+  user: null,
   token: '',
   isLoggedIn: false,
-  passcodeSet: false
+  clientId: ''
 };
 
 function deriveSiteRepo() {
@@ -66,9 +67,10 @@ function loadAuth() {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    authState.passcode = parsed.passcode || '';
-    authState.passcodeSet = !!parsed.passcode;
+    authState.user = parsed.user || null;
     authState.token = parsed.token || '';
+    authState.isLoggedIn = !!parsed.user;
+    authState.clientId = parsed.clientId || '';
   } catch (err) {
     console.error('Failed to parse auth state', err);
   }
@@ -92,7 +94,7 @@ function schedulePush(reason = 'Update league data') {
     return;
   }
   if (!authState.isLoggedIn) {
-    setSyncStatus('Login with the team passcode to enable sync.', true);
+    setSyncStatus('Sign in to enable sync.', true);
     return;
   }
   if (!gitHubSync.config.token) {
@@ -115,8 +117,9 @@ function persistState(options = {}) {
 
 function persistAuth() {
   localStorage.setItem(AUTH_KEY, JSON.stringify({
-    passcode: authState.passcode,
-    token: authState.token
+    user: authState.user,
+    token: authState.token,
+    clientId: authState.clientId
   }));
 }
 
@@ -140,6 +143,19 @@ function uid() {
 }
 
 function initElements() {
+  elements.appContent = $('#appContent');
+  elements.authOverlay = $('#authOverlay');
+  elements.authError = $('#authError');
+  elements.googleButton = $('#googleButton');
+  elements.googleClientId = $('#googleClientId');
+  elements.saveClientId = $('#saveClientId');
+  elements.resetClientId = $('#resetClientId');
+  elements.userBadge = $('#userBadge');
+  elements.userAvatar = $('#userAvatar');
+  elements.userName = $('#userName');
+  elements.userEmail = $('#userEmail');
+  elements.logoutBtn = $('#logoutBtn');
+
   elements.playerForm = $('#playerForm');
   elements.playerName = $('#playerName');
   elements.playerNickname = $('#playerNickname');
@@ -148,10 +164,10 @@ function initElements() {
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
 
-  elements.loginPasscode = $('#loginPasscode');
   elements.loginToken = $('#loginToken');
   elements.loginBtn = $('#loginBtn');
   elements.loginMessage = $('#loginMessage');
+  elements.sessionInfo = $('#sessionInfo');
 
   elements.syncStatus = $('#syncStatus');
 
@@ -421,53 +437,37 @@ function secureTokenFromConfig() {
 
 function updateLoginUI() {
   if (!elements.loginBtn) return;
-  elements.loginToken.disabled = false;
-  elements.loginPasscode.placeholder = authState.passcodeSet ? 'Enter team passcode' : 'Set a team passcode';
-  elements.loginBtn.textContent = authState.passcodeSet ? 'Login / Update token' : 'Create passcode & save token';
+  const loggedText = authState.isLoggedIn && authState.user ? `Signed in as ${authState.user.name || authState.user.email}` : 'Sign in required';
+  elements.sessionInfo.textContent = loggedText;
+  elements.loginToken.disabled = !authState.isLoggedIn;
+  elements.loginBtn.disabled = !authState.isLoggedIn;
+  elements.loginToken.placeholder = authState.isLoggedIn && authState.token ? 'Token stored locally' : 'ghp_...';
   if (!authState.isLoggedIn) {
-    setLoginMessage(authState.passcodeSet ? 'Enter the passcode to unlock sync.' : 'Set a passcode and token to start syncing.');
-  }
-  if (authState.isLoggedIn) {
-    setLoginMessage(authState.token ? 'Logged in. Token stored locally for sync.' : 'Logged in. Add a token to enable sync.');
-    if (authState.token && elements.loginToken && !elements.loginToken.value) {
-      elements.loginToken.placeholder = 'Token stored locally';
-    }
+    setLoginMessage('Login with Google to manage the sync token.', true);
+  } else if (authState.token) {
+    setLoginMessage('Token stored locally for sync.');
+  } else {
+    setLoginMessage('Add a GitHub token to enable sync.', true);
   }
   populateGitHubFields();
 }
 
-function handleLogin() {
-  const passcode = elements.loginPasscode.value.trim();
+function handleTokenSave() {
+  if (!authState.isLoggedIn) {
+    setLoginMessage('Sign in before saving a token.', true);
+    return;
+  }
   const tokenInput = elements.loginToken.value.trim();
-  if (!passcode) {
-    setLoginMessage('Enter the team passcode to continue.', true);
-    return;
-  }
-  if (!authState.passcodeSet) {
-    authState.passcode = passcode;
-    authState.passcodeSet = true;
-  } else if (authState.passcode !== passcode) {
-    setLoginMessage('Incorrect passcode.', true);
-    return;
-  }
-
   if (tokenInput) {
     authState.token = tokenInput;
     gitHubSync.config.token = tokenInput;
     persistGitHubConfig();
-  } else if (authState.token) {
-    gitHubSync.config.token = authState.token;
-  }
-
-  authState.isLoggedIn = true;
-  persistAuth();
-  setLoginMessage(authState.token ? 'Logged in. Token stored locally for sync.' : 'Logged in. Add a token to enable sync.', !authState.token);
-  populateGitHubFields();
-  if (authState.token) {
+    persistAuth();
+    setLoginMessage('Token saved locally for sync.');
     setSyncStatus('Ready to sync with stored token.');
     schedulePush('Login sync');
   } else {
-    setSyncStatus('Login saved. Add a token to sync.', true);
+    setLoginMessage('Enter a token to store for sync.', true);
   }
 }
 
@@ -486,6 +486,143 @@ function encodeToBase64(data) {
 
 function decodeBase64(content) {
   return decodeURIComponent(escape(atob(content)));
+}
+
+function decodeJwt(token) {
+  try {
+    const [, payload] = token.split('.');
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(decodeURIComponent(escape(json)));
+  } catch (err) {
+    console.error('Failed to decode JWT', err);
+    return null;
+  }
+}
+
+function setAuthVisibility() {
+  if (authState.isLoggedIn) {
+    elements.appContent.classList.remove('hidden');
+    elements.authOverlay.classList.add('hidden');
+  } else {
+    elements.appContent.classList.add('hidden');
+    elements.authOverlay.classList.remove('hidden');
+  }
+  updateUserBadge();
+  updateLoginUI();
+}
+
+function updateUserBadge() {
+  if (!elements.userBadge) return;
+  if (authState.isLoggedIn && authState.user) {
+    elements.userBadge.classList.remove('hidden');
+    elements.userName.textContent = authState.user.name || 'Signed in';
+    elements.userEmail.textContent = authState.user.email || '';
+    if (authState.user.picture) {
+      elements.userAvatar.style.backgroundImage = `url(${authState.user.picture})`;
+      elements.userAvatar.textContent = '';
+    } else {
+      elements.userAvatar.style.backgroundImage = '';
+      elements.userAvatar.textContent = (authState.user.name || '?').slice(0, 1).toUpperCase();
+    }
+  } else {
+    elements.userBadge.classList.add('hidden');
+    elements.userName.textContent = '';
+    elements.userEmail.textContent = '';
+    elements.userAvatar.textContent = '?';
+    elements.userAvatar.style.backgroundImage = '';
+  }
+}
+
+function setAuthError(message, isError = true) {
+  if (!elements.authError) return;
+  elements.authError.textContent = message;
+  elements.authError.classList.toggle('error', isError);
+}
+
+function handleGoogleCredential(response) {
+  const profile = decodeJwt(response.credential);
+  if (!profile) {
+    setAuthError('Unable to read Google response. Check your Client ID.', true);
+    return;
+  }
+  authState.user = {
+    name: profile.name || profile.email || 'Signed in',
+    email: profile.email || '',
+    picture: profile.picture || '',
+    provider: 'google',
+    sub: profile.sub
+  };
+  authState.isLoggedIn = true;
+  if (authState.token) {
+    gitHubSync.config.token = authState.token;
+    persistGitHubConfig();
+  }
+  persistAuth();
+  setAuthVisibility();
+  setSyncStatus('Signed in. Token required for sync.');
+}
+
+function initGoogleSignIn(retry = 0) {
+  if (!elements.googleClientId) return;
+  const stored = localStorage.getItem(GOOGLE_CLIENT_STORAGE_KEY);
+  if (!authState.clientId && stored) authState.clientId = stored;
+  if (authState.clientId && !elements.googleClientId.value) {
+    elements.googleClientId.value = authState.clientId;
+  }
+  if (!authState.clientId) {
+    setAuthError('Add a Google Client ID to enable sign-in.', true);
+    elements.googleButton.innerHTML = '';
+    return;
+  }
+  if (!window.google || !window.google.accounts || !window.google.accounts.id) {
+    if (retry < 10) {
+      setTimeout(() => initGoogleSignIn(retry + 1), 300);
+      return;
+    }
+    setAuthError('Google sign-in library not ready. Check your network.', true);
+    return;
+  }
+  elements.googleButton.innerHTML = '';
+  window.google.accounts.id.initialize({
+    client_id: authState.clientId,
+    callback: handleGoogleCredential,
+    auto_select: false
+  });
+  window.google.accounts.id.renderButton(elements.googleButton, {
+    theme: 'outline',
+    size: 'large',
+    type: 'standard',
+    shape: 'pill'
+  });
+  setAuthError('Use Google to continue.', false);
+}
+
+function saveClientId() {
+  const value = elements.googleClientId.value.trim();
+  authState.clientId = value;
+  localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, value);
+  persistAuth();
+  initGoogleSignIn();
+}
+
+function resetClientId() {
+  authState.clientId = '';
+  localStorage.removeItem(GOOGLE_CLIENT_STORAGE_KEY);
+  elements.googleClientId.value = '';
+  elements.googleButton.innerHTML = '';
+  persistAuth();
+  setAuthError('Client ID cleared. Add one to sign in.', true);
+}
+
+function handleLogout() {
+  authState.user = null;
+  authState.isLoggedIn = false;
+  gitHubSync.config.token = '';
+  persistGitHubConfig();
+  persistAuth();
+  updateLoginUI();
+  setAuthVisibility();
+  setSyncStatus('Signed out.', true);
 }
 
 async function loadFromGitHub(options = {}) {
@@ -931,16 +1068,13 @@ function attachEvents() {
   });
 
   elements.resetData.addEventListener('click', clearAllData);
-
-  elements.loginBtn.addEventListener('click', handleLogin);
-  ['keypress'].forEach(evt => {
-    elements.loginPasscode.addEventListener(evt, (e) => {
-      if (e.key === 'Enter') handleLogin();
-    });
-    elements.loginToken.addEventListener(evt, (e) => {
-      if (e.key === 'Enter') handleLogin();
-    });
+  elements.loginBtn.addEventListener('click', handleTokenSave);
+  elements.loginToken.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') handleTokenSave();
   });
+  elements.logoutBtn.addEventListener('click', handleLogout);
+  elements.saveClientId.addEventListener('click', saveClientId);
+  elements.resetClientId.addEventListener('click', resetClientId);
 }
 
 function render() {
@@ -960,9 +1094,12 @@ document.addEventListener('DOMContentLoaded', () => {
   secureTokenFromConfig();
   applySiteRepoDefaults();
   populateGitHubFields();
-  updateLoginUI();
+  setAuthVisibility();
   attachEvents();
   render();
-  loadFromGitHub({ silent: true });
+  initGoogleSignIn();
+  if (authState.isLoggedIn) {
+    loadFromGitHub({ silent: true });
+  }
   startAutoSync();
 });

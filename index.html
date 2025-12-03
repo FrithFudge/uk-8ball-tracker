@@ -5,43 +5,70 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>UK 8-Ball Pool League Tracker</title>
   <link rel="stylesheet" href="styles.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-  <header class="site-header">
-    <div>
-      <p class="eyebrow">Scoreboard Companion</p>
-      <h1>UK 8-Ball Pool League Tracker</h1>
-      <p class="subtitle">Track players, matches and stats</p>
+  <div id="authOverlay" class="auth-overlay">
+    <div class="auth-card">
+      <p class="eyebrow">Secure access</p>
+      <h1>Sign in to view the league</h1>
+      <p class="muted">Use Google sign-in to unlock the tracker. Apple ID requires separate configuration.</p>
+      <label class="input-set">Google Client ID
+        <input id="googleClientId" type="text" placeholder="Paste your Google client ID">
+      </label>
+      <div class="pill-row">
+        <button id="saveClientId" type="button">Save client ID</button>
+        <button id="resetClientId" type="button" class="ghost">Reset</button>
+      </div>
+      <div id="googleButton" class="google-button-slot"></div>
+      <button id="applePlaceholder" type="button" class="ghost" disabled>Sign in with Apple (configure separately)</button>
+      <p id="authError" class="muted small"></p>
     </div>
-    <div class="header-actions">
-      <p id="syncStatus" class="muted small">Auto-sync idle…</p>
-      <button id="resetData" class="danger">Reset All Data</button>
-    </div>
-  </header>
+  </div>
 
-  <main class="layout">
-    <section class="panel slim" aria-labelledby="login-heading">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Team login</p>
-          <h2 id="login-heading">Sync access</h2>
-        </div>
-        <p class="muted small">Use a shared passcode to unlock the repo token for auto-sync.</p>
+  <div id="appContent" class="hidden">
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">Scoreboard Companion</p>
+        <h1>UK 8-Ball Pool League Tracker</h1>
+        <p class="subtitle">Track players, matches and stats</p>
       </div>
-      <div class="stacked auth-grid">
-        <label class="input-set">Team passcode
-          <input id="loginPasscode" type="password" placeholder="Enter shared passcode" autocomplete="current-password">
-        </label>
-        <label class="input-set">GitHub token (stored locally after login)
-          <input id="loginToken" type="password" placeholder="ghp_..." autocomplete="off">
-        </label>
-        <div class="form-actions">
-          <p id="loginMessage" class="muted small"></p>
-          <button type="button" id="loginBtn">Login / Save token</button>
+      <div class="header-actions">
+        <div class="user-badge hidden" id="userBadge">
+          <div class="avatar" id="userAvatar">?</div>
+          <div>
+            <p id="userName" class="small"></p>
+            <p id="userEmail" class="muted small"></p>
+          </div>
+          <button id="logoutBtn" class="ghost">Sign out</button>
         </div>
-        <p class="muted small">Passcode protects the token locally; you can change the token any time after logging in.</p>
+        <div class="stack-right">
+          <p id="syncStatus" class="muted small">Auto-sync idle…</p>
+          <button id="resetData" class="danger">Reset All Data</button>
+        </div>
       </div>
-    </section>
+    </header>
+
+    <main class="layout">
+      <section class="panel slim" aria-labelledby="session-heading">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Session</p>
+            <h2 id="session-heading">Sync access</h2>
+          </div>
+          <p class="muted small" id="sessionInfo">Sign in to manage the shared token.</p>
+        </div>
+        <div class="stacked auth-grid">
+          <label class="input-set">GitHub token (stored locally after login)
+            <input id="loginToken" type="password" placeholder="ghp_..." autocomplete="off">
+          </label>
+          <div class="form-actions">
+            <p id="loginMessage" class="muted small"></p>
+            <button type="button" id="loginBtn">Save token</button>
+          </div>
+          <p class="muted small">Tokens stay on this device and are used for minute-by-minute sync.</p>
+        </div>
+      </section>
 
     <section class="panel" aria-labelledby="player-management-heading">
       <div class="panel-header">
@@ -160,6 +187,8 @@
       <div id="statsPanel" class="stats-panel">No player selected.</div>
     </section>
   </main>
+
+</div>
 
   <template id="playerTableTemplate">
     <table>
