@@ -44,41 +44,13 @@
           <button id="logoutBtn" class="ghost">Sign out</button>
         </div>
         <div class="stack-right">
-          <p id="syncStatus" class="muted small">Auto-sync idle…</p>
+          <p id="syncStatus" class="muted small">Local data only</p>
           <button id="resetData" class="danger">Reset All Data</button>
         </div>
       </div>
     </header>
 
     <main class="layout">
-      <section class="panel slim" aria-labelledby="session-heading">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Session</p>
-            <h2 id="session-heading">Sync access</h2>
-          </div>
-          <p class="muted small" id="sessionInfo">Sign in to activate GitHub sync via OAuth.</p>
-        </div>
-        <div class="stacked auth-grid">
-          <div class="form-grid two">
-            <label class="input-set">GitHub OAuth app client ID
-              <input id="githubClientId" type="text" value="Iv1.0f9f6e3f2a1b0c4d" placeholder="Iv1..." autocomplete="off">
-            </label>
-            <div class="input-set">
-              <span class="muted small">Device code</span>
-              <div id="githubCode" class="code-chip">No active login</div>
-              <p id="githubCodeHelp" class="muted small">Start GitHub sign-in to receive a code.</p>
-            </div>
-          </div>
-          <div class="pill-row">
-            <button type="button" id="startGithubLogin">Start GitHub sign-in</button>
-            <button type="button" id="resetGithubClient" class="ghost">Use default app</button>
-          </div>
-          <p class="muted small" id="loginMessage"></p>
-          <p class="muted small">GitHub access tokens stay in-memory for this session only.</p>
-        </div>
-      </section>
-
     <section class="panel" aria-labelledby="player-management-heading">
       <div class="panel-header">
         <div>

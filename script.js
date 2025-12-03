@@ -1,9 +1,7 @@
 const STORAGE_KEY = 'uk8ball-tracker';
-const GH_CONFIG_KEY = 'uk8ball-tracker-github';
 const AUTH_KEY = 'uk8ball-auth';
 const GOOGLE_CLIENT_STORAGE_KEY = 'uk8ball-google-client';
 const DEFAULT_GOOGLE_CLIENT_ID = '612621144566-r5otun40sr26fh4oftbvkre43a0rdg2b.apps.googleusercontent.com';
-const DEFAULT_GITHUB_CLIENT_ID = 'Iv1.0f9f6e3f2a1b0c4d';
 
 const state = {
   players: [],
@@ -16,38 +14,12 @@ const state = {
   }
 };
 
-const gitHubSync = {
-  config: {
-    owner: '',
-    repo: '',
-    branch: 'main',
-    path: 'data/league.json',
-    token: '',
-    clientId: DEFAULT_GITHUB_CLIENT_ID
-  },
-  lastSha: null,
-  isSyncing: false,
-  pendingPush: null,
-  lastPayload: null,
-  devicePoll: null,
-  deviceExpiresAt: null
-};
-
 const authState = {
   user: null,
   token: '',
   isLoggedIn: false,
   clientId: ''
 };
-
-function deriveSiteRepo() {
-  const host = window.location.hostname;
-  const path = window.location.pathname.split('/').filter(Boolean);
-  if (!host.endsWith('github.io')) return null;
-  const owner = host.replace('.github.io', '');
-  const repo = path[0] || `${owner}.github.io`;
-  return { owner, repo };
-}
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -94,42 +66,6 @@ function ensureDefaultClientId() {
   }
 }
 
-function loadGitHubConfig() {
-  const raw = localStorage.getItem(GH_CONFIG_KEY);
-  if (!raw) return;
-  try {
-    const parsed = JSON.parse(raw);
-    gitHubSync.config = {
-      ...gitHubSync.config,
-      path: parsed.path || 'data/league.json',
-      branch: parsed.branch || 'main',
-      clientId: parsed.clientId || DEFAULT_GITHUB_CLIENT_ID
-    };
-    gitHubSync.lastSha = parsed.lastSha || null;
-    // Strip any legacy token stored on disk
-    if (parsed.token) persistGitHubConfig();
-  } catch (err) {
-    console.error('Failed to parse GitHub config', err);
-  }
-}
-
-function schedulePush(reason = 'Update league data') {
-  if (!deriveSiteRepo()) {
-    setSyncStatus('Open this on GitHub Pages to enable auto-sync.', true);
-    return;
-  }
-  if (!authState.isLoggedIn) {
-    setSyncStatus('Sign in to enable sync.', true);
-    return;
-  }
-  if (!gitHubSync.config.token) {
-    setSyncStatus('Authorize GitHub to sync changes for everyone.', true);
-    return;
-  }
-  if (gitHubSync.pendingPush) clearTimeout(gitHubSync.pendingPush);
-  gitHubSync.pendingPush = setTimeout(() => pushToGitHub(reason), 1200);
-}
-
 function persistState(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     players: state.players,
@@ -137,7 +73,6 @@ function persistState(options = {}) {
     selectedPlayerId: state.selectedPlayerId,
     filters: state.filters
   }));
-  if (!options.skipSync) schedulePush(options.reason || 'Autosave');
 }
 
 function persistAuth() {
@@ -145,16 +80,6 @@ function persistAuth() {
     user: authState.user,
     clientId: authState.clientId
   }));
-}
-
-function persistGitHubConfig() {
-  const payload = {
-    path: gitHubSync.config.path,
-    branch: gitHubSync.config.branch,
-    lastSha: gitHubSync.lastSha,
-    clientId: gitHubSync.config.clientId || DEFAULT_GITHUB_CLIENT_ID
-  };
-  localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(payload));
 }
 
 function portableState() {
@@ -192,14 +117,6 @@ function initElements() {
   elements.playerCount = $('#playerCount');
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
-
-  elements.githubClientId = $('#githubClientId');
-  elements.githubCode = $('#githubCode');
-  elements.githubCodeHelp = $('#githubCodeHelp');
-  elements.startGithubLogin = $('#startGithubLogin');
-  elements.resetGithubClient = $('#resetGithubClient');
-  elements.loginMessage = $('#loginMessage');
-  elements.sessionInfo = $('#sessionInfo');
 
   elements.syncStatus = $('#syncStatus');
 
@@ -426,177 +343,6 @@ function setSyncStatus(message, isError = false) {
   elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
 }
 
-function setLoginMessage(message, isError = false) {
-  if (!elements.loginMessage) return;
-  elements.loginMessage.textContent = message;
-  elements.loginMessage.style.color = isError ? 'var(--danger)' : 'var(--primary)';
-}
-
-function populateGitHubFields() {
-  const derived = deriveSiteRepo();
-  if (!derived) {
-    setSyncStatus('Open this on GitHub Pages to enable auto-sync.', true);
-    return;
-  }
-  if (elements.syncStatus && elements.syncStatus.textContent === 'Auto-sync idle…') {
-    setSyncStatus(`Auto-sync ready for ${derived.owner}/${derived.repo}`);
-  }
-}
-
-function applySiteRepoDefaults(showStatus = false) {
-  const derived = deriveSiteRepo();
-  if (!derived) {
-    if (showStatus && elements.syncStatus) {
-      setSyncStatus('Open this on GitHub Pages to sync with its repo.', true);
-    }
-    return;
-  }
-  gitHubSync.config.owner = derived.owner;
-  gitHubSync.config.repo = derived.repo;
-  if (!gitHubSync.config.path) { gitHubSync.config.path = 'data/league.json'; }
-  persistGitHubConfig();
-  populateGitHubFields();
-  if (showStatus) setSyncStatus(`Ready to sync via ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
-}
-
-function secureTokenFromConfig() {
-  // Token remains memory-only; clear any persisted copy
-  gitHubSync.config.token = authState.isLoggedIn ? authState.token : '';
-  persistGitHubConfig();
-}
-
-function updateLoginUI() {
-  if (!elements.startGithubLogin) return;
-  const loggedText = authState.isLoggedIn && authState.user ? `Signed in as ${authState.user.name || authState.user.email}` : 'Sign in required';
-  elements.sessionInfo.textContent = loggedText;
-  elements.startGithubLogin.disabled = !authState.isLoggedIn;
-  elements.resetGithubClient.disabled = false;
-  if (elements.githubClientId) elements.githubClientId.value = gitHubSync.config.clientId || DEFAULT_GITHUB_CLIENT_ID;
-  if (!authState.isLoggedIn) {
-    setLoginMessage('Login with Google to enable GitHub OAuth sync.', true);
-    setDeviceCodeStatus('No active login', 'Sign in, then start GitHub sign-in.');
-  } else if (authState.token) {
-    setLoginMessage('GitHub access granted for this session.');
-  } else {
-    setLoginMessage('Start GitHub sign-in to enable auto-sync.', true);
-  }
-  populateGitHubFields();
-}
-
-function validateGitHubConfig() {
-  const derived = deriveSiteRepo();
-  if (!derived) return 'Open this app from GitHub Pages to sync with the site repo.';
-  gitHubSync.config.owner = derived.owner;
-  gitHubSync.config.repo = derived.repo;
-  if (!gitHubSync.config.path.endsWith('.json')) return 'Path should point to a JSON file.';
-  if (!gitHubSync.config.clientId || !gitHubSync.config.clientId.startsWith('Iv1.')) return 'Provide a valid GitHub OAuth client ID (starts with Iv1.).';
-  return '';
-}
-
-function setDeviceCodeStatus(code, message) {
-  if (elements.githubCode) elements.githubCode.textContent = code || 'No active login';
-  if (elements.githubCodeHelp) elements.githubCodeHelp.textContent = message || '';
-}
-
-async function startGitHubDeviceLogin() {
-  if (!authState.isLoggedIn) {
-    setLoginMessage('Sign in with Google first to continue.', true);
-    return;
-  }
-  const clientId = (elements.githubClientId?.value.trim()) || DEFAULT_GITHUB_CLIENT_ID;
-  gitHubSync.config.clientId = clientId;
-  persistGitHubConfig();
-  const validation = validateGitHubConfig();
-  if (validation) {
-    setLoginMessage(validation, true);
-    return;
-  }
-  if (gitHubSync.devicePoll) {
-    clearInterval(gitHubSync.devicePoll);
-    gitHubSync.devicePoll = null;
-  }
-  setLoginMessage('Requesting GitHub device code...');
-  try {
-    const res = await fetch('https://github.com/login/device/code', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ client_id: clientId, scope: 'repo' })
-    });
-    const json = await res.json();
-    if (!res.ok || json.error) {
-      const msg = json.error_description || 'Unable to start GitHub login. Check the OAuth app client ID.';
-      setLoginMessage(msg, true);
-      setDeviceCodeStatus('No active login', msg);
-      return;
-    }
-    gitHubSync.deviceExpiresAt = Date.now() + (json.expires_in || 900) * 1000;
-    setDeviceCodeStatus(json.user_code, `Go to ${json.verification_uri} and enter the code.`);
-    setLoginMessage('Waiting for GitHub approval...');
-    beginDevicePolling({ clientId, deviceCode: json.device_code, interval: (json.interval || 5) * 1000 });
-  } catch (err) {
-    console.error(err);
-    setLoginMessage('Could not reach GitHub for OAuth login.', true);
-  }
-}
-
-function beginDevicePolling({ clientId, deviceCode, interval }) {
-  if (gitHubSync.devicePoll) clearInterval(gitHubSync.devicePoll);
-  gitHubSync.devicePoll = setInterval(async () => {
-    if (gitHubSync.deviceExpiresAt && Date.now() > gitHubSync.deviceExpiresAt) {
-      clearInterval(gitHubSync.devicePoll);
-      gitHubSync.devicePoll = null;
-      setLoginMessage('Device code expired. Start sign-in again.', true);
-      setDeviceCodeStatus('No active login', 'Code expired.');
-      return;
-    }
-    try {
-      const res = await fetch('https://github.com/login/oauth/access_token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          client_id: clientId,
-          device_code: deviceCode,
-          grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
-        })
-      });
-      const json = await res.json();
-      if (json.error === 'authorization_pending') return;
-      if (json.error === 'slow_down') {
-        interval += 5000;
-        return;
-      }
-      if (json.error) {
-        setLoginMessage(json.error_description || 'GitHub login failed.', true);
-        clearInterval(gitHubSync.devicePoll);
-        gitHubSync.devicePoll = null;
-        return;
-      }
-      if (json.access_token) {
-        authState.token = json.access_token;
-        gitHubSync.config.token = json.access_token;
-        setLoginMessage('GitHub access granted for this session.');
-        setSyncStatus('Ready to auto-sync via GitHub.');
-        schedulePush('OAuth login');
-        clearInterval(gitHubSync.devicePoll);
-        gitHubSync.devicePoll = null;
-      }
-    } catch (err) {
-      console.error(err);
-      setLoginMessage('Polling GitHub failed. Check network.', true);
-      clearInterval(gitHubSync.devicePoll);
-      gitHubSync.devicePoll = null;
-    }
-  }, interval);
-}
-
-function encodeToBase64(data) {
-  return btoa(unescape(encodeURIComponent(data)));
-}
-
-function decodeBase64(content) {
-  return decodeURIComponent(escape(atob(content)));
-}
-
 function decodeJwt(token) {
   try {
     const [, payload] = token.split('.');
@@ -617,7 +363,6 @@ function setAuthVisibility() {
     elements.authOverlay.classList.remove('hidden');
   }
   updateUserBadge();
-  updateLoginUI();
 }
 
 function updateUserBadge() {
@@ -662,13 +407,9 @@ function handleGoogleCredential(response) {
     sub: profile.sub
   };
   authState.isLoggedIn = true;
-  if (authState.token) {
-    gitHubSync.config.token = authState.token;
-    persistGitHubConfig();
-  }
   persistAuth();
   setAuthVisibility();
-  setSyncStatus('Signed in. Start GitHub sign-in to sync.');
+  setSyncStatus('Signed in. Data stays on this device.');
 }
 
 function initGoogleSignIn(retry = 0) {
@@ -740,134 +481,9 @@ function handleLogout() {
   authState.user = null;
   authState.isLoggedIn = false;
   authState.token = '';
-  gitHubSync.config.token = '';
-  if (gitHubSync.devicePoll) clearInterval(gitHubSync.devicePoll);
-  gitHubSync.devicePoll = null;
-  gitHubSync.deviceExpiresAt = null;
-  setDeviceCodeStatus('No active login', 'Signed out.');
-  persistGitHubConfig();
   persistAuth();
-  updateLoginUI();
   setAuthVisibility();
   setSyncStatus('Signed out.', true);
-}
-
-async function loadFromGitHub(options = {}) {
-  const validation = validateGitHubConfig();
-  if (validation) {
-    if (!options.silent) setSyncStatus(validation, true);
-    return;
-  }
-  const { owner, repo, branch, path, token } = gitHubSync.config;
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`;
-  const headers = { Accept: 'application/vnd.github+json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  gitHubSync.isSyncing = true;
-  if (!options.silent) setSyncStatus('Loading from GitHub...');
-  try {
-    const res = await fetch(url, { headers });
-    if (res.status === 404) {
-      gitHubSync.lastSha = null;
-      persistGitHubConfig();
-      if (!options.silent) setSyncStatus('File not found on GitHub. Data will sync after the next save.', true);
-      return;
-    }
-    if (!res.ok) {
-      throw new Error(`GitHub responded with ${res.status}`);
-    }
-    const json = await res.json();
-    if (!json.content) {
-      throw new Error('No content at path.');
-    }
-    const decoded = JSON.parse(decodeBase64(json.content));
-    const validationMessage = validateImportedData(decoded);
-    if (validationMessage) {
-      if (!options.silent) setSyncStatus(validationMessage, true);
-      return;
-    }
-    applyImportedData(decoded, { skipSync: true, reason: 'Sync pull' });
-    gitHubSync.lastSha = json.sha || null;
-    gitHubSync.lastPayload = JSON.stringify(portableState(), null, 2);
-    persistGitHubConfig();
-    if (!options.silent) setSyncStatus('Loaded data from GitHub.');
-  } catch (err) {
-    console.error(err);
-    if (!options.silent) setSyncStatus('Could not load from GitHub. Check token/repo/path.', true);
-  } finally {
-    gitHubSync.isSyncing = false;
-  }
-}
-
-async function pushToGitHub(reason = 'Update league data') {
-  const validation = validateGitHubConfig();
-  if (validation) {
-    setSyncStatus(validation, true);
-    return false;
-  }
-  if (gitHubSync.isSyncing) {
-    setSyncStatus('Sync already in progress…');
-    return false;
-  }
-  const { owner, repo, branch, path, token } = gitHubSync.config;
-  if (!token) {
-    setSyncStatus('Authorize GitHub (OAuth) to push changes.', true);
-    return false;
-  }
-  if (gitHubSync.pendingPush) {
-    clearTimeout(gitHubSync.pendingPush);
-    gitHubSync.pendingPush = null;
-  }
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-  const headers = {
-    Accept: 'application/vnd.github+json',
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  };
-  gitHubSync.isSyncing = true;
-  setSyncStatus('Pushing to GitHub...');
-  try {
-    if (!gitHubSync.lastSha) {
-      const check = await fetch(`${url}?ref=${encodeURIComponent(branch)}`, { headers });
-      if (check.ok) {
-        const existing = await check.json();
-        gitHubSync.lastSha = existing.sha || null;
-      }
-    }
-    const payload = JSON.stringify(portableState(), null, 2);
-    if (gitHubSync.lastPayload === payload) {
-      setSyncStatus('No changes to sync.');
-      return true;
-    }
-    const content = encodeToBase64(payload);
-    const body = {
-      message: `${reason} (${new Date().toLocaleString()})`,
-      content,
-      branch
-    };
-    if (gitHubSync.lastSha) body.sha = gitHubSync.lastSha;
-    const res = await fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) });
-    if (!res.ok) {
-      if (res.status === 409) {
-        setSyncStatus('GitHub file changed. Load latest before pushing again.', true);
-        gitHubSync.lastSha = null;
-        persistGitHubConfig();
-        return false;
-      }
-      throw new Error(`GitHub responded with ${res.status}`);
-    }
-    const json = await res.json();
-    gitHubSync.lastSha = json.content?.sha || null;
-    gitHubSync.lastPayload = payload;
-    persistGitHubConfig();
-    setSyncStatus('Pushed data to GitHub.');
-    return true;
-  } catch (err) {
-    console.error(err);
-    setSyncStatus('Could not push to GitHub. Check token/repo permissions.', true);
-    return false;
-  } finally {
-    gitHubSync.isSyncing = false;
-  }
 }
 
 function calculateAllStats() {
@@ -1126,17 +742,6 @@ function clearAllData() {
   state.selectedPlayerId = null;
   localStorage.removeItem(STORAGE_KEY);
   render();
-  schedulePush('Reset data');
-}
-
-function startAutoSync() {
-  setSyncStatus('Auto-sync every minute using this site repo.');
-  setInterval(async () => {
-    await loadFromGitHub({ silent: true });
-    if (authState.isLoggedIn && gitHubSync.config.token) {
-      await pushToGitHub('Scheduled autosync');
-    }
-  }, 60000);
 }
 
 function attachEvents() {
@@ -1195,17 +800,6 @@ function attachEvents() {
   });
 
   elements.resetData.addEventListener('click', clearAllData);
-  elements.startGithubLogin.addEventListener('click', startGitHubDeviceLogin);
-  elements.githubClientId.addEventListener('change', () => {
-    gitHubSync.config.clientId = elements.githubClientId.value.trim() || DEFAULT_GITHUB_CLIENT_ID;
-    persistGitHubConfig();
-  });
-  elements.resetGithubClient.addEventListener('click', () => {
-    gitHubSync.config.clientId = DEFAULT_GITHUB_CLIENT_ID;
-    if (elements.githubClientId) elements.githubClientId.value = DEFAULT_GITHUB_CLIENT_ID;
-    persistGitHubConfig();
-    setLoginMessage('Default GitHub OAuth app restored.');
-  });
   elements.logoutBtn.addEventListener('click', handleLogout);
   elements.saveClientId.addEventListener('click', saveClientId);
   elements.resetClientId.addEventListener('click', resetClientId);
@@ -1225,16 +819,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadState();
   loadAuth();
   ensureDefaultClientId();
-  loadGitHubConfig();
-  secureTokenFromConfig();
-  applySiteRepoDefaults();
-  populateGitHubFields();
   setAuthVisibility();
   attachEvents();
   render();
   initGoogleSignIn();
-  if (authState.isLoggedIn) {
-    loadFromGitHub({ silent: true });
-  }
-  startAutoSync();
+  setSyncStatus('Data saved locally in this browser.');
 });
