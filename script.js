@@ -2,11 +2,15 @@ const STORAGE_KEY = 'uk8ball-tracker';
 const AUTH_KEY = 'uk8ball-auth';
 const GOOGLE_CLIENT_STORAGE_KEY = 'uk8ball-google-client';
 const DEFAULT_GOOGLE_CLIENT_ID = '612621144566-r5otun40sr26fh4oftbvkre43a0rdg2b.apps.googleusercontent.com';
+const SUPABASE_KEY = 'uk8ball-supabase-config';
+const DEFAULT_SUPABASE_KEY = 'sbp_915dde8d730655f8b743d5575a750a41ee4abbaf';
+const SUPABASE_SYNC_INTERVAL = 60000;
 
 const state = {
   players: [],
   matches: [],
   selectedPlayerId: null,
+  updatedAt: Date.now(),
   filters: {
     playerId: 'all',
     from: '',
@@ -19,6 +23,19 @@ const authState = {
   token: '',
   isLoggedIn: false,
   clientId: ''
+};
+
+const supabaseState = {
+  config: {
+    url: '',
+    key: DEFAULT_SUPABASE_KEY,
+    league: 'default'
+  },
+  client: null,
+  lastHash: '',
+  lastRemoteUpdate: 0,
+  intervalId: null,
+  pushTimeout: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -34,6 +51,7 @@ function loadState() {
     state.matches = parsed.matches || [];
     state.selectedPlayerId = parsed.selectedPlayerId || null;
     state.filters = parsed.filters || state.filters;
+    state.updatedAt = parsed.updatedAt || Date.now();
   } catch (err) {
     console.error('Failed to parse saved data', err);
   }
@@ -54,6 +72,31 @@ function loadAuth() {
   }
 }
 
+function loadSupabaseConfig() {
+  const raw = localStorage.getItem(SUPABASE_KEY);
+  if (!raw) {
+    supabaseState.config.key = DEFAULT_SUPABASE_KEY;
+    supabaseState.config.league = 'default';
+    return;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    supabaseState.config.url = parsed.url || '';
+    supabaseState.config.key = parsed.key || DEFAULT_SUPABASE_KEY;
+    supabaseState.config.league = parsed.league || 'default';
+  } catch (err) {
+    console.error('Failed to parse Supabase config', err);
+  }
+}
+
+function persistSupabaseConfig() {
+  localStorage.setItem(SUPABASE_KEY, JSON.stringify({
+    url: supabaseState.config.url,
+    key: supabaseState.config.key,
+    league: supabaseState.config.league
+  }));
+}
+
 function ensureDefaultClientId() {
   if (!authState.clientId && DEFAULT_GOOGLE_CLIENT_ID) {
     authState.clientId = DEFAULT_GOOGLE_CLIENT_ID;
@@ -67,12 +110,17 @@ function ensureDefaultClientId() {
 }
 
 function persistState(options = {}) {
+  if (!options.skipTimestamp) {
+    state.updatedAt = Date.now();
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     players: state.players,
     matches: state.matches,
     selectedPlayerId: state.selectedPlayerId,
-    filters: state.filters
+    filters: state.filters,
+    updatedAt: state.updatedAt
   }));
+  if (!options.skipSync) scheduleSupabasePush();
 }
 
 function persistAuth() {
@@ -89,6 +137,93 @@ function portableState() {
     selectedPlayerId: null,
     filters: { playerId: 'all', from: '', to: '' }
   };
+}
+
+async function fetchSupabaseState(label = 'fetch') {
+  const client = ensureSupabaseClient();
+  if (!client) {
+    setSyncStatus('Supabase not ready.', true);
+    return null;
+  }
+  const league = supabaseState.config.league || 'default';
+  const { data, error } = await client
+    .from('league_state')
+    .select('payload, updated_at')
+    .eq('id', league)
+    .maybeSingle();
+
+  if (error && error.code !== 'PGRST116') {
+    console.error('Supabase fetch error', error);
+    setSyncStatus(`Supabase fetch failed (${label}).`, true);
+    return null;
+  }
+  if (!data) {
+    setSyncStatus('No cloud save found yet.', false);
+    return null;
+  }
+
+  supabaseState.lastRemoteUpdate = data.payload?.updatedAt || new Date(data.updated_at).getTime();
+  setSyncStatus('Loaded from Supabase.', false);
+  return data.payload;
+}
+
+async function pushSupabaseState(reason = 'manual') {
+  const client = ensureSupabaseClient();
+  if (!client) return;
+  const payload = supabasePayload();
+  const hash = payloadHash(payload);
+  if (hash === supabaseState.lastHash) return;
+
+  const league = supabaseState.config.league || 'default';
+  const { error } = await client.from('league_state').upsert({
+    id: league,
+    payload,
+    updated_at: new Date().toISOString()
+  });
+  if (error) {
+    console.error('Supabase push error', error);
+    setSyncStatus('Failed to push to Supabase.', true);
+    return;
+  }
+  supabaseState.lastHash = hash;
+  supabaseState.lastRemoteUpdate = payload.updatedAt;
+  setSyncStatus(`Saved to Supabase (${reason}).`);
+}
+
+function applyRemoteState(payload, source = 'Supabase') {
+  const validationError = validateImportedData(payload);
+  if (validationError) {
+    setSyncStatus(validationError, true);
+    return;
+  }
+  state.players = payload.players || [];
+  state.matches = payload.matches || [];
+  state.filters = { playerId: 'all', from: '', to: '' };
+  state.selectedPlayerId = null;
+  state.updatedAt = payload.updatedAt || Date.now();
+  persistState({ skipTimestamp: true, skipSync: true });
+  render();
+  setSyncStatus(`State refreshed from ${source}.`);
+}
+
+async function reconcileSupabase(source = 'scheduled') {
+  if (!supabaseReady()) return;
+  const remote = await fetchSupabaseState(source);
+  const localUpdated = state.updatedAt || 0;
+  const remoteUpdated = remote?.updatedAt || supabaseState.lastRemoteUpdate || 0;
+  if (remote && remoteUpdated > localUpdated) {
+    applyRemoteState(remote, 'Supabase');
+    supabaseState.lastHash = payloadHash(remote);
+  } else if (localUpdated > remoteUpdated) {
+    await pushSupabaseState(source);
+  }
+}
+
+function startSupabaseInterval() {
+  if (supabaseState.intervalId) clearInterval(supabaseState.intervalId);
+  if (!supabaseReady()) return;
+  supabaseState.intervalId = setInterval(() => reconcileSupabase('auto'), SUPABASE_SYNC_INTERVAL);
+  reconcileSupabase('startup');
 }
 
 function uid() {
@@ -109,6 +244,14 @@ function initElements() {
   elements.userName = $('#userName');
   elements.userEmail = $('#userEmail');
   elements.logoutBtn = $('#logoutBtn');
+
+  elements.supabaseUrl = $('#supabaseUrl');
+  elements.supabaseKey = $('#supabaseKey');
+  elements.supabaseLeague = $('#supabaseLeague');
+  elements.saveSupabase = $('#saveSupabase');
+  elements.testSupabase = $('#testSupabase');
+  elements.clearSupabase = $('#clearSupabase');
+  elements.supabaseStatus = $('#supabaseStatus');
 
   elements.playerForm = $('#playerForm');
   elements.playerName = $('#playerName');
@@ -341,6 +484,49 @@ function setSyncStatus(message, isError = false) {
   if (!elements.syncStatus) return;
   elements.syncStatus.textContent = message;
   elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
+  if (elements.supabaseStatus) {
+    elements.supabaseStatus.textContent = message;
+    elements.supabaseStatus.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+  }
+}
+
+function updateSupabaseInputs() {
+  if (!elements.supabaseUrl || !elements.supabaseKey || !elements.supabaseLeague) return;
+  elements.supabaseUrl.value = supabaseState.config.url || '';
+  elements.supabaseKey.value = supabaseState.config.key || '';
+  elements.supabaseLeague.value = supabaseState.config.league || 'default';
+}
+
+function supabaseReady() {
+  return !!(authState.isLoggedIn && supabaseState.config.url && supabaseState.config.key && window.supabase);
+}
+
+function ensureSupabaseClient() {
+  if (!supabaseReady()) return null;
+  if (!supabaseState.client) {
+    supabaseState.client = window.supabase.createClient(supabaseState.config.url, supabaseState.config.key);
+  }
+  return supabaseState.client;
+}
+
+function supabasePayload() {
+  return {
+    players: state.players,
+    matches: state.matches,
+    updatedAt: state.updatedAt || Date.now()
+  };
+}
+
+function payloadHash(payload) {
+  return btoa(unescape(encodeURIComponent(JSON.stringify(payload)))).slice(0, 32);
+}
+
+function scheduleSupabasePush() {
+  if (!supabaseReady()) return;
+  if (supabaseState.pushTimeout) clearTimeout(supabaseState.pushTimeout);
+  supabaseState.pushTimeout = setTimeout(() => {
+    pushSupabaseState('local change');
+  }, 1500);
 }
 
 function decodeJwt(token) {
@@ -409,7 +595,8 @@ function handleGoogleCredential(response) {
   authState.isLoggedIn = true;
   persistAuth();
   setAuthVisibility();
-  setSyncStatus('Signed in. Data stays on this device.');
+  setSyncStatus('Signed in. Connecting to Supabase if configured.');
+  startSupabaseInterval();
 }
 
 function initGoogleSignIn(retry = 0) {
@@ -483,7 +670,10 @@ function handleLogout() {
   authState.token = '';
   persistAuth();
   setAuthVisibility();
-  setSyncStatus('Signed out.', true);
+  if (supabaseState.intervalId) clearInterval(supabaseState.intervalId);
+  supabaseState.intervalId = null;
+  supabaseState.client = null;
+  setSyncStatus('Signed out. Supabase sync paused.', true);
 }
 
 function calculateAllStats() {
@@ -740,8 +930,42 @@ function clearAllData() {
   state.players = [];
   state.matches = [];
   state.selectedPlayerId = null;
-  localStorage.removeItem(STORAGE_KEY);
+  persistState();
   render();
+}
+
+function saveSupabaseConfigFromInputs() {
+  supabaseState.config.url = (elements.supabaseUrl.value || '').trim();
+  supabaseState.config.key = (elements.supabaseKey.value || '').trim();
+  supabaseState.config.league = (elements.supabaseLeague.value || '').trim() || 'default';
+  supabaseState.client = null;
+  persistSupabaseConfig();
+  updateSupabaseInputs();
+  if (!supabaseReady()) {
+    setSyncStatus('Supabase details saved locally. Add URL and key to enable.', true);
+    return;
+  }
+  setSyncStatus('Supabase saved. Sync will run automatically.');
+  startSupabaseInterval();
+}
+
+async function testSupabaseConnection() {
+  saveSupabaseConfigFromInputs();
+  if (!supabaseReady()) return;
+  const remote = await fetchSupabaseState('test');
+  if (remote) {
+    setSyncStatus('Connected to Supabase and found saved data.');
+  } else {
+    setSyncStatus('Connected to Supabase. No remote data yet.');
+  }
+}
+
+function clearSupabaseConfig() {
+  supabaseState.config = { url: '', key: DEFAULT_SUPABASE_KEY, league: 'default' };
+  supabaseState.client = null;
+  persistSupabaseConfig();
+  updateSupabaseInputs();
+  setSyncStatus('Supabase config cleared. Using local storage.', true);
 }
 
 function attachEvents() {
@@ -803,6 +1027,9 @@ function attachEvents() {
   elements.logoutBtn.addEventListener('click', handleLogout);
   elements.saveClientId.addEventListener('click', saveClientId);
   elements.resetClientId.addEventListener('click', resetClientId);
+  elements.saveSupabase.addEventListener('click', saveSupabaseConfigFromInputs);
+  elements.testSupabase.addEventListener('click', testSupabaseConnection);
+  elements.clearSupabase.addEventListener('click', clearSupabaseConfig);
 }
 
 function render() {
@@ -818,10 +1045,13 @@ document.addEventListener('DOMContentLoaded', () => {
   initElements();
   loadState();
   loadAuth();
+  loadSupabaseConfig();
   ensureDefaultClientId();
   setAuthVisibility();
   attachEvents();
   render();
   initGoogleSignIn();
+  updateSupabaseInputs();
   setSyncStatus('Data saved locally in this browser.');
+  startSupabaseInterval();
 });
