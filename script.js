@@ -383,9 +383,16 @@ function setLoginMessage(message, isError = false) {
 
 function populateGitHubFields() {
   if (!elements.ghToken) return;
-  elements.ghToken.value = authState.isLoggedIn ? gitHubSync.config.token : '';
-  elements.ghToken.disabled = !authState.isLoggedIn;
-  elements.ghToken.placeholder = authState.isLoggedIn ? 'ghp_...' : 'Login to unlock token';
+  if (authState.isLoggedIn) {
+    elements.ghToken.value = gitHubSync.config.token || '';
+  } else if (!elements.ghToken.value) {
+    // Preserve whatever the user types if they haven't logged in yet.
+    elements.ghToken.value = '';
+  }
+  elements.ghToken.disabled = false;
+  elements.ghToken.placeholder = authState.isLoggedIn
+    ? 'ghp_...'
+    : 'Enter token (saved after login)';
   if (elements.siteRepoDisplay) {
     const derived = deriveSiteRepo();
     if (derived) {
@@ -415,12 +422,14 @@ function applySiteRepoDefaults(showStatus = false) {
 }
 
 function readGitHubFields() {
+  const entered = elements.ghToken.value.trim();
   if (!authState.isLoggedIn) {
-    setSyncStatus('Login first to save the repo token.', true);
-    populateGitHubFields();
+    setSyncStatus('Token kept in this field; login with passcode to save it locally.', true);
     return;
   }
-  gitHubSync.config.token = elements.ghToken.value.trim();
+  gitHubSync.config.token = entered;
+  authState.token = entered;
+  persistAuth();
   persistGitHubConfig();
 }
 
