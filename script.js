@@ -18,11 +18,11 @@ const gitHubSync = {
     repo: '',
     branch: 'main',
     path: 'data/league.json',
-    token: '',
-    auto: false
+    token: ''
   },
   lastSha: null,
-  isSyncing: false
+  isSyncing: false,
+  pendingPush: null
 };
 
 function deriveSiteRepo() {
@@ -57,24 +57,38 @@ function loadGitHubConfig() {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    gitHubSync.config = { ...gitHubSync.config, ...parsed };
+    gitHubSync.config = { ...gitHubSync.config, token: parsed.token || '', path: parsed.path || 'data/league.json', branch: parsed.branch || 'main' };
     gitHubSync.lastSha = parsed.lastSha || null;
   } catch (err) {
     console.error('Failed to parse GitHub config', err);
   }
 }
 
-function persistState() {
+function schedulePush(reason = 'Update league data') {
+  if (!deriveSiteRepo()) {
+    setSyncStatus('Open this on GitHub Pages to enable auto-sync.', true);
+    return;
+  }
+  if (!gitHubSync.config.token) {
+    setSyncStatus('Add a GitHub token to sync changes for everyone.', true);
+    return;
+  }
+  if (gitHubSync.pendingPush) clearTimeout(gitHubSync.pendingPush);
+  gitHubSync.pendingPush = setTimeout(() => pushToGitHub(reason), 1200);
+}
+
+function persistState(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     players: state.players,
     matches: state.matches,
     selectedPlayerId: state.selectedPlayerId,
     filters: state.filters
   }));
+  if (!options.skipSync) schedulePush(options.reason || 'Autosave');
 }
 
 function persistGitHubConfig() {
-  const payload = { ...gitHubSync.config, lastSha: gitHubSync.lastSha };
+  const payload = { token: gitHubSync.config.token, path: gitHubSync.config.path, branch: gitHubSync.config.branch, lastSha: gitHubSync.lastSha };
   localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(payload));
 }
 
@@ -101,12 +115,8 @@ function initElements() {
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
 
-  elements.ghBranch = $('#ghBranch');
-  elements.ghPath = $('#ghPath');
   elements.ghToken = $('#ghToken');
-  elements.ghAutoSync = $('#ghAutoSync');
-  elements.ghLoad = $('#ghLoad');
-  elements.ghPush = $('#ghPush');
+  elements.ghRefresh = $('#ghRefresh');
   elements.syncStatus = $('#syncStatus');
   elements.siteRepoDisplay = $('#siteRepoDisplay');
 
@@ -146,11 +156,10 @@ function addPlayer(name, nickname) {
   }
   const player = { id: uid(), name: name.trim(), nickname: nickname.trim(), active: true, createdAt: new Date().toISOString() };
   state.players.push(player);
-  persistState();
+  persistState({ reason: 'Add player' });
   render();
   elements.playerForm.reset();
   elements.duplicateWarning.textContent = '';
-  maybeAutoSync('Add player');
   return true;
 }
 
@@ -169,9 +178,8 @@ function deletePlayer(id) {
   }
 
   if (state.selectedPlayerId === id) state.selectedPlayerId = null;
-  persistState();
+  persistState({ reason: 'Delete/archive player' });
   render();
-  maybeAutoSync('Delete/archive player');
 }
 
 function buildPlayerOptions(selectEl, includeAll = false) {
@@ -315,12 +323,12 @@ function validateImportedData(data) {
   return '';
 }
 
-function applyImportedData(data) {
+function applyImportedData(data, options = {}) {
   state.players = data.players || [];
   state.matches = data.matches || [];
   state.selectedPlayerId = null;
   state.filters = { playerId: 'all', from: '', to: '' };
-  persistState();
+  persistState({ skipSync: options.skipSync, reason: options.reason });
   render();
 }
 
@@ -331,11 +339,8 @@ function setSyncStatus(message, isError = false) {
 }
 
 function populateGitHubFields() {
-  if (!elements.ghBranch) return;
-  elements.ghBranch.value = gitHubSync.config.branch;
-  elements.ghPath.value = gitHubSync.config.path;
+  if (!elements.ghToken) return;
   elements.ghToken.value = gitHubSync.config.token;
-  elements.ghAutoSync.checked = gitHubSync.config.auto;
   if (elements.siteRepoDisplay) {
     const derived = deriveSiteRepo();
     if (derived) {
@@ -359,14 +364,13 @@ function applySiteRepoDefaults(showStatus = false) {
   if (!gitHubSync.config.path) { gitHubSync.config.path = 'data/league.json'; }
   persistGitHubConfig();
   populateGitHubFields();
-  if (showStatus) setSyncStatus(`Using this site repo: ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
+  if (showStatus || elements.syncStatus.textContent === 'Waiting to sync…') {
+    setSyncStatus(`Ready to sync via ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
+  }
 }
 
 function readGitHubFields() {
-  gitHubSync.config.branch = elements.ghBranch.value.trim() || 'main';
-  gitHubSync.config.path = elements.ghPath.value.trim() || 'data/league.json';
   gitHubSync.config.token = elements.ghToken.value.trim();
-  gitHubSync.config.auto = elements.ghAutoSync.checked;
   persistGitHubConfig();
 }
 
@@ -387,10 +391,10 @@ function decodeBase64(content) {
   return decodeURIComponent(escape(atob(content)));
 }
 
-async function loadFromGitHub() {
+async function loadFromGitHub(options = {}) {
   const validation = validateGitHubConfig();
   if (validation) {
-    setSyncStatus(validation, true);
+    if (!options.silent) setSyncStatus(validation, true);
     return;
   }
   const { owner, repo, branch, path, token } = gitHubSync.config;
@@ -398,13 +402,13 @@ async function loadFromGitHub() {
   const headers = { Accept: 'application/vnd.github+json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   gitHubSync.isSyncing = true;
-  setSyncStatus('Loading from GitHub...');
+  if (!options.silent) setSyncStatus('Loading from GitHub...');
   try {
     const res = await fetch(url, { headers });
     if (res.status === 404) {
       gitHubSync.lastSha = null;
       persistGitHubConfig();
-      setSyncStatus('File not found on GitHub. Push current data to create it.', true);
+      if (!options.silent) setSyncStatus('File not found on GitHub. Data will sync after the next save.', true);
       return;
     }
     if (!res.ok) {
@@ -417,16 +421,16 @@ async function loadFromGitHub() {
     const decoded = JSON.parse(decodeBase64(json.content));
     const validationMessage = validateImportedData(decoded);
     if (validationMessage) {
-      setSyncStatus(validationMessage, true);
+      if (!options.silent) setSyncStatus(validationMessage, true);
       return;
     }
-    applyImportedData(decoded);
+    applyImportedData(decoded, { skipSync: true, reason: 'Sync pull' });
     gitHubSync.lastSha = json.sha || null;
     persistGitHubConfig();
-    setSyncStatus('Loaded data from GitHub.');
+    if (!options.silent) setSyncStatus('Loaded data from GitHub.');
   } catch (err) {
     console.error(err);
-    setSyncStatus('Could not load from GitHub. Check token/repo/path.', true);
+    if (!options.silent) setSyncStatus('Could not load from GitHub. Check token/repo/path.', true);
   } finally {
     gitHubSync.isSyncing = false;
   }
@@ -442,6 +446,10 @@ async function pushToGitHub(reason = 'Update league data') {
   if (!token) {
     setSyncStatus('GitHub token required to push changes.', true);
     return false;
+  }
+  if (gitHubSync.pendingPush) {
+    clearTimeout(gitHubSync.pendingPush);
+    gitHubSync.pendingPush = null;
   }
   const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
   const headers = {
@@ -488,12 +496,6 @@ async function pushToGitHub(reason = 'Update league data') {
   } finally {
     gitHubSync.isSyncing = false;
   }
-}
-
-function maybeAutoSync(reason) {
-  if (!gitHubSync.config.auto) return;
-  if (!gitHubSync.config.owner || !gitHubSync.config.repo || !gitHubSync.config.token) return;
-  pushToGitHub(reason);
 }
 
 function calculateAllStats() {
@@ -578,9 +580,8 @@ function saveMatch(data) {
   elements.matchForm.reset();
   elements.matchMessage.textContent = 'Match saved!';
   elements.matchMessage.style.color = 'var(--primary)';
-  persistState();
+  persistState({ reason: 'Record match' });
   render();
-  maybeAutoSync('Record match');
 }
 
 function renderMatches() {
@@ -753,7 +754,7 @@ function clearAllData() {
   state.selectedPlayerId = null;
   localStorage.removeItem(STORAGE_KEY);
   render();
-  maybeAutoSync('Reset data');
+  schedulePush('Reset data');
 }
 
 function attachEvents() {
@@ -807,21 +808,19 @@ function attachEvents() {
     if (!state.matches.length) return;
     if (!confirm('Clear all recorded matches?')) return;
     state.matches = [];
-    persistState();
+    persistState({ reason: 'Clear matches' });
     render();
-    maybeAutoSync('Clear matches');
   });
 
   elements.resetData.addEventListener('click', clearAllData);
 
   ['input', 'change'].forEach(evt => {
-    elements.ghBranch.addEventListener(evt, readGitHubFields);
-    elements.ghPath.addEventListener(evt, readGitHubFields);
-    elements.ghToken.addEventListener(evt, readGitHubFields);
-    elements.ghAutoSync.addEventListener(evt, readGitHubFields);
+    elements.ghToken.addEventListener(evt, () => {
+      readGitHubFields();
+      setSyncStatus('Token saved locally. Changes will auto-sync.', false);
+    });
   });
-  elements.ghLoad.addEventListener('click', loadFromGitHub);
-  elements.ghPush.addEventListener('click', () => pushToGitHub('Update from app'));
+  elements.ghRefresh.addEventListener('click', () => loadFromGitHub({ silent: false }));
 }
 
 function render() {
@@ -841,4 +840,5 @@ document.addEventListener('DOMContentLoaded', () => {
   populateGitHubFields();
   attachEvents();
   render();
+  loadFromGitHub({ silent: true });
 });

@@ -279,16 +279,8 @@ tbody tr:hover {
   gap: 12px;
 }
 
-.sync-actions .input-set button {
-  width: fit-content;
-}
-
-.sync-actions p { margin: 0; }
-
-.sync-actions code {
-  background: rgba(255, 255, 255, 0.06);
-  padding: 2px 6px;
-  border-radius: 6px;
+.panel.slim {
+  gap: 6px;
 }
 
 .repo-banner {
