@@ -57,17 +57,25 @@
             <p class="eyebrow">Session</p>
             <h2 id="session-heading">Sync access</h2>
           </div>
-          <p class="muted small" id="sessionInfo">Sign in to manage the shared token.</p>
+          <p class="muted small" id="sessionInfo">Sign in to activate GitHub sync via OAuth.</p>
         </div>
         <div class="stacked auth-grid">
-          <label class="input-set">GitHub token (session-only; never stored)
-            <input id="loginToken" type="password" placeholder="ghp_..." autocomplete="off">
-          </label>
-          <div class="form-actions">
-            <p id="loginMessage" class="muted small"></p>
-            <button type="button" id="loginBtn">Save token</button>
+          <div class="form-grid two">
+            <label class="input-set">GitHub OAuth app client ID
+              <input id="githubClientId" type="text" value="Iv1.0f9f6e3f2a1b0c4d" placeholder="Iv1..." autocomplete="off">
+            </label>
+            <div class="input-set">
+              <span class="muted small">Device code</span>
+              <div id="githubCode" class="code-chip">No active login</div>
+              <p id="githubCodeHelp" class="muted small">Start GitHub sign-in to receive a code.</p>
+            </div>
           </div>
-          <p class="muted small">Tokens stay in-memory for this session and are never written to localStorage.</p>
+          <div class="pill-row">
+            <button type="button" id="startGithubLogin">Start GitHub sign-in</button>
+            <button type="button" id="resetGithubClient" class="ghost">Use default app</button>
+          </div>
+          <p class="muted small" id="loginMessage"></p>
+          <p class="muted small">GitHub access tokens stay in-memory for this session only.</p>
         </div>
       </section>
 

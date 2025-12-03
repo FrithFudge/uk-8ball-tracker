@@ -3,6 +3,7 @@ const GH_CONFIG_KEY = 'uk8ball-tracker-github';
 const AUTH_KEY = 'uk8ball-auth';
 const GOOGLE_CLIENT_STORAGE_KEY = 'uk8ball-google-client';
 const DEFAULT_GOOGLE_CLIENT_ID = '612621144566-r5otun40sr26fh4oftbvkre43a0rdg2b.apps.googleusercontent.com';
+const DEFAULT_GITHUB_CLIENT_ID = 'Iv1.0f9f6e3f2a1b0c4d';
 
 const state = {
   players: [],
@@ -21,12 +22,15 @@ const gitHubSync = {
     repo: '',
     branch: 'main',
     path: 'data/league.json',
-    token: ''
+    token: '',
+    clientId: DEFAULT_GITHUB_CLIENT_ID
   },
   lastSha: null,
   isSyncing: false,
   pendingPush: null,
-  lastPayload: null
+  lastPayload: null,
+  devicePoll: null,
+  deviceExpiresAt: null
 };
 
 const authState = {
@@ -95,7 +99,12 @@ function loadGitHubConfig() {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    gitHubSync.config = { ...gitHubSync.config, path: parsed.path || 'data/league.json', branch: parsed.branch || 'main' };
+    gitHubSync.config = {
+      ...gitHubSync.config,
+      path: parsed.path || 'data/league.json',
+      branch: parsed.branch || 'main',
+      clientId: parsed.clientId || DEFAULT_GITHUB_CLIENT_ID
+    };
     gitHubSync.lastSha = parsed.lastSha || null;
     // Strip any legacy token stored on disk
     if (parsed.token) persistGitHubConfig();
@@ -114,7 +123,7 @@ function schedulePush(reason = 'Update league data') {
     return;
   }
   if (!gitHubSync.config.token) {
-    setSyncStatus('Add a GitHub token to sync changes for everyone.', true);
+    setSyncStatus('Authorize GitHub to sync changes for everyone.', true);
     return;
   }
   if (gitHubSync.pendingPush) clearTimeout(gitHubSync.pendingPush);
@@ -139,7 +148,12 @@ function persistAuth() {
 }
 
 function persistGitHubConfig() {
-  const payload = { path: gitHubSync.config.path, branch: gitHubSync.config.branch, lastSha: gitHubSync.lastSha };
+  const payload = {
+    path: gitHubSync.config.path,
+    branch: gitHubSync.config.branch,
+    lastSha: gitHubSync.lastSha,
+    clientId: gitHubSync.config.clientId || DEFAULT_GITHUB_CLIENT_ID
+  };
   localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(payload));
 }
 
@@ -179,8 +193,11 @@ function initElements() {
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
 
-  elements.loginToken = $('#loginToken');
-  elements.loginBtn = $('#loginBtn');
+  elements.githubClientId = $('#githubClientId');
+  elements.githubCode = $('#githubCode');
+  elements.githubCodeHelp = $('#githubCodeHelp');
+  elements.startGithubLogin = $('#startGithubLogin');
+  elements.resetGithubClient = $('#resetGithubClient');
   elements.loginMessage = $('#loginMessage');
   elements.sessionInfo = $('#sessionInfo');
 
@@ -449,37 +466,21 @@ function secureTokenFromConfig() {
 }
 
 function updateLoginUI() {
-  if (!elements.loginBtn) return;
+  if (!elements.startGithubLogin) return;
   const loggedText = authState.isLoggedIn && authState.user ? `Signed in as ${authState.user.name || authState.user.email}` : 'Sign in required';
   elements.sessionInfo.textContent = loggedText;
-  elements.loginToken.disabled = !authState.isLoggedIn;
-  elements.loginBtn.disabled = !authState.isLoggedIn;
-  elements.loginToken.placeholder = authState.isLoggedIn && authState.token ? 'Token kept for this session' : 'ghp_...';
+  elements.startGithubLogin.disabled = !authState.isLoggedIn;
+  elements.resetGithubClient.disabled = false;
+  if (elements.githubClientId) elements.githubClientId.value = gitHubSync.config.clientId || DEFAULT_GITHUB_CLIENT_ID;
   if (!authState.isLoggedIn) {
-    setLoginMessage('Login with Google to enable sync.', true);
+    setLoginMessage('Login with Google to enable GitHub OAuth sync.', true);
+    setDeviceCodeStatus('No active login', 'Sign in, then start GitHub sign-in.');
   } else if (authState.token) {
-    setLoginMessage('Token ready for this session. Not saved to disk.');
+    setLoginMessage('GitHub access granted for this session.');
   } else {
-    setLoginMessage('Add a GitHub token for this session to enable sync.', true);
+    setLoginMessage('Start GitHub sign-in to enable auto-sync.', true);
   }
   populateGitHubFields();
-}
-
-function handleTokenSave() {
-  if (!authState.isLoggedIn) {
-    setLoginMessage('Sign in before adding a token.', true);
-    return;
-  }
-  const tokenInput = elements.loginToken.value.trim();
-  if (tokenInput) {
-    authState.token = tokenInput;
-    gitHubSync.config.token = tokenInput;
-    setLoginMessage('Token captured for this session only.');
-    setSyncStatus('Ready to sync for this session. Token not saved.');
-    schedulePush('Login sync');
-  } else {
-    setLoginMessage('Enter a token to enable sync this session.', true);
-  }
 }
 
 function validateGitHubConfig() {
@@ -488,7 +489,104 @@ function validateGitHubConfig() {
   gitHubSync.config.owner = derived.owner;
   gitHubSync.config.repo = derived.repo;
   if (!gitHubSync.config.path.endsWith('.json')) return 'Path should point to a JSON file.';
+  if (!gitHubSync.config.clientId || !gitHubSync.config.clientId.startsWith('Iv1.')) return 'Provide a valid GitHub OAuth client ID (starts with Iv1.).';
   return '';
+}
+
+function setDeviceCodeStatus(code, message) {
+  if (elements.githubCode) elements.githubCode.textContent = code || 'No active login';
+  if (elements.githubCodeHelp) elements.githubCodeHelp.textContent = message || '';
+}
+
+async function startGitHubDeviceLogin() {
+  if (!authState.isLoggedIn) {
+    setLoginMessage('Sign in with Google first to continue.', true);
+    return;
+  }
+  const clientId = (elements.githubClientId?.value.trim()) || DEFAULT_GITHUB_CLIENT_ID;
+  gitHubSync.config.clientId = clientId;
+  persistGitHubConfig();
+  const validation = validateGitHubConfig();
+  if (validation) {
+    setLoginMessage(validation, true);
+    return;
+  }
+  if (gitHubSync.devicePoll) {
+    clearInterval(gitHubSync.devicePoll);
+    gitHubSync.devicePoll = null;
+  }
+  setLoginMessage('Requesting GitHub device code...');
+  try {
+    const res = await fetch('https://github.com/login/device/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ client_id: clientId, scope: 'repo' })
+    });
+    const json = await res.json();
+    if (!res.ok || json.error) {
+      const msg = json.error_description || 'Unable to start GitHub login. Check the OAuth app client ID.';
+      setLoginMessage(msg, true);
+      setDeviceCodeStatus('No active login', msg);
+      return;
+    }
+    gitHubSync.deviceExpiresAt = Date.now() + (json.expires_in || 900) * 1000;
+    setDeviceCodeStatus(json.user_code, `Go to ${json.verification_uri} and enter the code.`);
+    setLoginMessage('Waiting for GitHub approval...');
+    beginDevicePolling({ clientId, deviceCode: json.device_code, interval: (json.interval || 5) * 1000 });
+  } catch (err) {
+    console.error(err);
+    setLoginMessage('Could not reach GitHub for OAuth login.', true);
+  }
+}
+
+function beginDevicePolling({ clientId, deviceCode, interval }) {
+  if (gitHubSync.devicePoll) clearInterval(gitHubSync.devicePoll);
+  gitHubSync.devicePoll = setInterval(async () => {
+    if (gitHubSync.deviceExpiresAt && Date.now() > gitHubSync.deviceExpiresAt) {
+      clearInterval(gitHubSync.devicePoll);
+      gitHubSync.devicePoll = null;
+      setLoginMessage('Device code expired. Start sign-in again.', true);
+      setDeviceCodeStatus('No active login', 'Code expired.');
+      return;
+    }
+    try {
+      const res = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          client_id: clientId,
+          device_code: deviceCode,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
+        })
+      });
+      const json = await res.json();
+      if (json.error === 'authorization_pending') return;
+      if (json.error === 'slow_down') {
+        interval += 5000;
+        return;
+      }
+      if (json.error) {
+        setLoginMessage(json.error_description || 'GitHub login failed.', true);
+        clearInterval(gitHubSync.devicePoll);
+        gitHubSync.devicePoll = null;
+        return;
+      }
+      if (json.access_token) {
+        authState.token = json.access_token;
+        gitHubSync.config.token = json.access_token;
+        setLoginMessage('GitHub access granted for this session.');
+        setSyncStatus('Ready to auto-sync via GitHub.');
+        schedulePush('OAuth login');
+        clearInterval(gitHubSync.devicePoll);
+        gitHubSync.devicePoll = null;
+      }
+    } catch (err) {
+      console.error(err);
+      setLoginMessage('Polling GitHub failed. Check network.', true);
+      clearInterval(gitHubSync.devicePoll);
+      gitHubSync.devicePoll = null;
+    }
+  }, interval);
 }
 
 function encodeToBase64(data) {
@@ -570,7 +668,7 @@ function handleGoogleCredential(response) {
   }
   persistAuth();
   setAuthVisibility();
-  setSyncStatus('Signed in. Token required for sync.');
+  setSyncStatus('Signed in. Start GitHub sign-in to sync.');
 }
 
 function initGoogleSignIn(retry = 0) {
@@ -643,6 +741,10 @@ function handleLogout() {
   authState.isLoggedIn = false;
   authState.token = '';
   gitHubSync.config.token = '';
+  if (gitHubSync.devicePoll) clearInterval(gitHubSync.devicePoll);
+  gitHubSync.devicePoll = null;
+  gitHubSync.deviceExpiresAt = null;
+  setDeviceCodeStatus('No active login', 'Signed out.');
   persistGitHubConfig();
   persistAuth();
   updateLoginUI();
@@ -708,7 +810,7 @@ async function pushToGitHub(reason = 'Update league data') {
   }
   const { owner, repo, branch, path, token } = gitHubSync.config;
   if (!token) {
-    setSyncStatus('GitHub token required to push changes.', true);
+    setSyncStatus('Authorize GitHub (OAuth) to push changes.', true);
     return false;
   }
   if (gitHubSync.pendingPush) {
@@ -1093,9 +1195,16 @@ function attachEvents() {
   });
 
   elements.resetData.addEventListener('click', clearAllData);
-  elements.loginBtn.addEventListener('click', handleTokenSave);
-  elements.loginToken.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') handleTokenSave();
+  elements.startGithubLogin.addEventListener('click', startGitHubDeviceLogin);
+  elements.githubClientId.addEventListener('change', () => {
+    gitHubSync.config.clientId = elements.githubClientId.value.trim() || DEFAULT_GITHUB_CLIENT_ID;
+    persistGitHubConfig();
+  });
+  elements.resetGithubClient.addEventListener('click', () => {
+    gitHubSync.config.clientId = DEFAULT_GITHUB_CLIENT_ID;
+    if (elements.githubClientId) elements.githubClientId.value = DEFAULT_GITHUB_CLIENT_ID;
+    persistGitHubConfig();
+    setLoginMessage('Default GitHub OAuth app restored.');
   });
   elements.logoutBtn.addEventListener('click', handleLogout);
   elements.saveClientId.addEventListener('click', saveClientId);
