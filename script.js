@@ -23,7 +23,8 @@ const gitHubSync = {
   },
   lastSha: null,
   isSyncing: false,
-  pendingPush: null
+  pendingPush: null,
+  lastPayload: null
 };
 
 const authState = {
@@ -152,10 +153,7 @@ function initElements() {
   elements.loginBtn = $('#loginBtn');
   elements.loginMessage = $('#loginMessage');
 
-  elements.ghToken = $('#ghToken');
-  elements.ghRefresh = $('#ghRefresh');
   elements.syncStatus = $('#syncStatus');
-  elements.siteRepoDisplay = $('#siteRepoDisplay');
 
   elements.matchForm = $('#matchForm');
   elements.playerA = $('#playerA');
@@ -382,24 +380,13 @@ function setLoginMessage(message, isError = false) {
 }
 
 function populateGitHubFields() {
-  if (!elements.ghToken) return;
-  if (authState.isLoggedIn) {
-    elements.ghToken.value = gitHubSync.config.token || '';
-  } else if (!elements.ghToken.value) {
-    // Preserve whatever the user types if they haven't logged in yet.
-    elements.ghToken.value = '';
+  const derived = deriveSiteRepo();
+  if (!derived) {
+    setSyncStatus('Open this on GitHub Pages to enable auto-sync.', true);
+    return;
   }
-  elements.ghToken.disabled = false;
-  elements.ghToken.placeholder = authState.isLoggedIn
-    ? 'ghp_...'
-    : 'Enter token (saved after login)';
-  if (elements.siteRepoDisplay) {
-    const derived = deriveSiteRepo();
-    if (derived) {
-      elements.siteRepoDisplay.textContent = `Using this site's repo: ${derived.owner}/${derived.repo}`;
-    } else {
-      elements.siteRepoDisplay.textContent = 'Open this on GitHub Pages to sync via the site repo.';
-    }
+  if (elements.syncStatus && elements.syncStatus.textContent === 'Auto-sync idle…') {
+    setSyncStatus(`Auto-sync ready for ${derived.owner}/${derived.repo}`);
   }
 }
 
@@ -416,21 +403,7 @@ function applySiteRepoDefaults(showStatus = false) {
   if (!gitHubSync.config.path) { gitHubSync.config.path = 'data/league.json'; }
   persistGitHubConfig();
   populateGitHubFields();
-  if (showStatus || elements.syncStatus.textContent === 'Waiting to sync…') {
-    setSyncStatus(`Ready to sync via ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
-  }
-}
-
-function readGitHubFields() {
-  const entered = elements.ghToken.value.trim();
-  if (!authState.isLoggedIn) {
-    setSyncStatus('Token kept in this field; login with passcode to save it locally.', true);
-    return;
-  }
-  gitHubSync.config.token = entered;
-  authState.token = entered;
-  persistAuth();
-  persistGitHubConfig();
+  if (showStatus) setSyncStatus(`Ready to sync via ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
 }
 
 function secureTokenFromConfig() {
@@ -550,6 +523,7 @@ async function loadFromGitHub(options = {}) {
     }
     applyImportedData(decoded, { skipSync: true, reason: 'Sync pull' });
     gitHubSync.lastSha = json.sha || null;
+    gitHubSync.lastPayload = JSON.stringify(portableState(), null, 2);
     persistGitHubConfig();
     if (!options.silent) setSyncStatus('Loaded data from GitHub.');
   } catch (err) {
@@ -564,6 +538,10 @@ async function pushToGitHub(reason = 'Update league data') {
   const validation = validateGitHubConfig();
   if (validation) {
     setSyncStatus(validation, true);
+    return false;
+  }
+  if (gitHubSync.isSyncing) {
+    setSyncStatus('Sync already in progress…');
     return false;
   }
   const { owner, repo, branch, path, token } = gitHubSync.config;
@@ -591,7 +569,12 @@ async function pushToGitHub(reason = 'Update league data') {
         gitHubSync.lastSha = existing.sha || null;
       }
     }
-    const content = encodeToBase64(JSON.stringify(portableState(), null, 2));
+    const payload = JSON.stringify(portableState(), null, 2);
+    if (gitHubSync.lastPayload === payload) {
+      setSyncStatus('No changes to sync.');
+      return true;
+    }
+    const content = encodeToBase64(payload);
     const body = {
       message: `${reason} (${new Date().toLocaleString()})`,
       content,
@@ -610,6 +593,7 @@ async function pushToGitHub(reason = 'Update league data') {
     }
     const json = await res.json();
     gitHubSync.lastSha = json.content?.sha || null;
+    gitHubSync.lastPayload = payload;
     persistGitHubConfig();
     setSyncStatus('Pushed data to GitHub.');
     return true;
@@ -881,6 +865,16 @@ function clearAllData() {
   schedulePush('Reset data');
 }
 
+function startAutoSync() {
+  setSyncStatus('Auto-sync every minute using this site repo.');
+  setInterval(async () => {
+    await loadFromGitHub({ silent: true });
+    if (authState.isLoggedIn && gitHubSync.config.token) {
+      await pushToGitHub('Scheduled autosync');
+    }
+  }, 60000);
+}
+
 function attachEvents() {
   elements.playerForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -947,14 +941,6 @@ function attachEvents() {
       if (e.key === 'Enter') handleLogin();
     });
   });
-
-  ['input', 'change'].forEach(evt => {
-    elements.ghToken.addEventListener(evt, () => {
-      readGitHubFields();
-      setSyncStatus('Token saved locally. Changes will auto-sync.', false);
-    });
-  });
-  elements.ghRefresh.addEventListener('click', () => loadFromGitHub({ silent: false }));
 }
 
 function render() {
@@ -978,4 +964,5 @@ document.addEventListener('DOMContentLoaded', () => {
   attachEvents();
   render();
   loadFromGitHub({ silent: true });
+  startAutoSync();
 });

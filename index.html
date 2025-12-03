@@ -14,6 +14,7 @@
       <p class="subtitle">Track players, matches and stats</p>
     </div>
     <div class="header-actions">
+      <p id="syncStatus" class="muted small">Auto-sync idle…</p>
       <button id="resetData" class="danger">Reset All Data</button>
     </div>
   </header>
@@ -66,28 +67,6 @@
       </form>
 
       <div id="playerList" class="table-wrapper"></div>
-    </section>
-
-    <section class="panel slim" aria-labelledby="cloud-sync-heading">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Cloud sync</p>
-          <h2 id="cloud-sync-heading">Auto GitHub sync (this site)</h2>
-        </div>
-        <p class="muted small">Data is automatically loaded and saved using the GitHub repo that serves this page.</p>
-      </div>
-
-      <div class="stacked">
-        <div class="repo-banner" id="siteRepoDisplay">Detecting site repository…</div>
-        <label class="input-set">GitHub token for write access
-          <input id="ghToken" type="password" placeholder="ghp_..." autocomplete="off">
-          <span class="muted small">Stored locally; required to save changes back to the repo.</span>
-        </label>
-        <div class="form-actions">
-          <p id="syncStatus" class="muted small">Waiting to sync…</p>
-          <button type="button" class="ghost" id="ghRefresh">Refresh from repo</button>
-        </div>
-      </div>
     </section>
 
     <section class="panel" aria-labelledby="new-match-heading">

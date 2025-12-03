@@ -50,6 +50,13 @@ a { color: inherit; }
   backdrop-filter: blur(6px);
 }
 
+.header-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
 .layout {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
