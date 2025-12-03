@@ -48,35 +48,38 @@
     <section class="panel" aria-labelledby="sync-heading">
       <div class="panel-header">
         <div>
-          <p class="eyebrow">Backup &amp; Sync</p>
-          <h2 id="sync-heading">Move data between devices</h2>
+          <p class="eyebrow">Shared Data</p>
+          <h2 id="sync-heading">GitHub-hosted league file</h2>
         </div>
-        <p class="muted small">Export a backup or import from another device.</p>
+        <p class="muted small">Sync players and matches through a JSON file in a GitHub repo.</p>
       </div>
 
       <div class="stacked sync-actions">
         <div class="form-grid two">
-          <div class="input-set">
-            <label class="muted small">Download backup</label>
-            <button type="button" id="exportData">Export JSON</button>
-            <p class="muted small">Save this file and open it on another device to import.</p>
-          </div>
-          <div class="input-set">
-            <label class="muted small">Import backup (.json)</label>
-            <input type="file" id="importFile" accept="application/json,.json">
-            <button type="button" id="importData">Import file</button>
-          </div>
+          <label class="input-set">GitHub owner / org
+            <input id="ghOwner" type="text" placeholder="e.g. your-username" autocomplete="username">
+          </label>
+          <label class="input-set">Repo name
+            <input id="ghRepo" type="text" placeholder="e.g. uk-8ball-tracker-data">
+          </label>
         </div>
-
-        <label class="input-set">
-          Share code (copy/paste between devices)
-          <textarea id="shareCode" rows="3" spellcheck="false"></textarea>
+        <div class="form-grid two">
+          <label class="input-set">Branch
+            <input id="ghBranch" type="text" placeholder="main" value="main">
+          </label>
+          <label class="input-set">File path (JSON)
+            <input id="ghPath" type="text" placeholder="data/league.json" value="data/league.json">
+          </label>
+        </div>
+        <label class="input-set">GitHub token (needs <code>repo</code> scope for private repos)
+          <input id="ghToken" type="password" placeholder="ghp_..." autocomplete="off">
+          <span class="muted small">Token is stored locally in your browser only.</span>
         </label>
         <div class="form-actions">
-          <div class="muted small">Copy this code to your new device, paste it here, then import.</div>
+          <label class="checkbox"> <input type="checkbox" id="ghAutoSync"> Auto-sync after changes</label>
           <div class="button-row">
-            <button type="button" class="ghost" id="copyShare">Copy code</button>
-            <button type="button" id="importShare">Import from code</button>
+            <button type="button" class="ghost" id="ghLoad">Load from GitHub</button>
+            <button type="button" id="ghPush">Push current data</button>
           </div>
         </div>
         <p id="syncStatus" class="muted small"></p>

@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'uk8ball-tracker';
-const SYNC_EXPORT_FILENAME = 'uk8ball-tracker-backup.json';
+const GH_CONFIG_KEY = 'uk8ball-tracker-github';
 
 const state = {
   players: [],
@@ -10,6 +10,19 @@ const state = {
     from: '',
     to: ''
   }
+};
+
+const gitHubSync = {
+  config: {
+    owner: '',
+    repo: '',
+    branch: 'main',
+    path: 'data/league.json',
+    token: '',
+    auto: false
+  },
+  lastSha: null,
+  isSyncing: false
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -30,6 +43,18 @@ function loadState() {
   }
 }
 
+function loadGitHubConfig() {
+  const raw = localStorage.getItem(GH_CONFIG_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    gitHubSync.config = { ...gitHubSync.config, ...parsed };
+    gitHubSync.lastSha = parsed.lastSha || null;
+  } catch (err) {
+    console.error('Failed to parse GitHub config', err);
+  }
+}
+
 function persistState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     players: state.players,
@@ -39,6 +64,11 @@ function persistState() {
   }));
 }
 
+function persistGitHubConfig() {
+  const payload = { ...gitHubSync.config, lastSha: gitHubSync.lastSha };
+  localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(payload));
+}
+
 function portableState() {
   return {
     players: state.players,
@@ -46,29 +76,6 @@ function portableState() {
     selectedPlayerId: null,
     filters: { playerId: 'all', from: '', to: '' }
   };
-}
-
-function encodeShareCode(data) {
-  const json = JSON.stringify(data);
-  try {
-    return btoa(unescape(encodeURIComponent(json)));
-  } catch (err) {
-    console.error('Failed to encode share code', err);
-    return json;
-  }
-}
-
-function decodeShareCode(code) {
-  try {
-    const decoded = atob(code);
-    return JSON.parse(decodeURIComponent(escape(decoded)));
-  } catch (err) {
-    try {
-      return JSON.parse(code);
-    } catch (inner) {
-      throw err;
-    }
-  }
 }
 
 function uid() {
@@ -85,12 +92,14 @@ function initElements() {
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
 
-  elements.exportData = $('#exportData');
-  elements.importData = $('#importData');
-  elements.importFile = $('#importFile');
-  elements.shareCode = $('#shareCode');
-  elements.copyShare = $('#copyShare');
-  elements.importShare = $('#importShare');
+  elements.ghOwner = $('#ghOwner');
+  elements.ghRepo = $('#ghRepo');
+  elements.ghBranch = $('#ghBranch');
+  elements.ghPath = $('#ghPath');
+  elements.ghToken = $('#ghToken');
+  elements.ghAutoSync = $('#ghAutoSync');
+  elements.ghLoad = $('#ghLoad');
+  elements.ghPush = $('#ghPush');
   elements.syncStatus = $('#syncStatus');
 
   elements.matchForm = $('#matchForm');
@@ -133,6 +142,7 @@ function addPlayer(name, nickname) {
   render();
   elements.playerForm.reset();
   elements.duplicateWarning.textContent = '';
+  maybeAutoSync('Add player');
   return true;
 }
 
@@ -153,6 +163,7 @@ function deletePlayer(id) {
   if (state.selectedPlayerId === id) state.selectedPlayerId = null;
   persistState();
   render();
+  maybeAutoSync('Delete/archive player');
 }
 
 function buildPlayerOptions(selectEl, includeAll = false) {
@@ -305,16 +316,153 @@ function applyImportedData(data) {
   render();
 }
 
-function updateShareCodeField() {
-  if (!elements.shareCode) return;
-  const code = encodeShareCode(portableState());
-  elements.shareCode.value = code;
-}
-
 function setSyncStatus(message, isError = false) {
   if (!elements.syncStatus) return;
   elements.syncStatus.textContent = message;
   elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
+}
+
+function populateGitHubFields() {
+  if (!elements.ghOwner) return;
+  elements.ghOwner.value = gitHubSync.config.owner;
+  elements.ghRepo.value = gitHubSync.config.repo;
+  elements.ghBranch.value = gitHubSync.config.branch;
+  elements.ghPath.value = gitHubSync.config.path;
+  elements.ghToken.value = gitHubSync.config.token;
+  elements.ghAutoSync.checked = gitHubSync.config.auto;
+}
+
+function readGitHubFields() {
+  gitHubSync.config.owner = elements.ghOwner.value.trim();
+  gitHubSync.config.repo = elements.ghRepo.value.trim();
+  gitHubSync.config.branch = elements.ghBranch.value.trim() || 'main';
+  gitHubSync.config.path = elements.ghPath.value.trim() || 'data/league.json';
+  gitHubSync.config.token = elements.ghToken.value.trim();
+  gitHubSync.config.auto = elements.ghAutoSync.checked;
+  persistGitHubConfig();
+}
+
+function validateGitHubConfig() {
+  if (!gitHubSync.config.owner || !gitHubSync.config.repo) return 'Owner and repo are required.';
+  if (!gitHubSync.config.path.endsWith('.json')) return 'Path should point to a JSON file.';
+  return '';
+}
+
+function encodeToBase64(data) {
+  return btoa(unescape(encodeURIComponent(data)));
+}
+
+function decodeBase64(content) {
+  return decodeURIComponent(escape(atob(content)));
+}
+
+async function loadFromGitHub() {
+  const validation = validateGitHubConfig();
+  if (validation) {
+    setSyncStatus(validation, true);
+    return;
+  }
+  const { owner, repo, branch, path, token } = gitHubSync.config;
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`;
+  const headers = { Accept: 'application/vnd.github+json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  gitHubSync.isSyncing = true;
+  setSyncStatus('Loading from GitHub...');
+  try {
+    const res = await fetch(url, { headers });
+    if (res.status === 404) {
+      gitHubSync.lastSha = null;
+      persistGitHubConfig();
+      setSyncStatus('File not found on GitHub. Push current data to create it.', true);
+      return;
+    }
+    if (!res.ok) {
+      throw new Error(`GitHub responded with ${res.status}`);
+    }
+    const json = await res.json();
+    if (!json.content) {
+      throw new Error('No content at path.');
+    }
+    const decoded = JSON.parse(decodeBase64(json.content));
+    const validationMessage = validateImportedData(decoded);
+    if (validationMessage) {
+      setSyncStatus(validationMessage, true);
+      return;
+    }
+    applyImportedData(decoded);
+    gitHubSync.lastSha = json.sha || null;
+    persistGitHubConfig();
+    setSyncStatus('Loaded data from GitHub.');
+  } catch (err) {
+    console.error(err);
+    setSyncStatus('Could not load from GitHub. Check token/repo/path.', true);
+  } finally {
+    gitHubSync.isSyncing = false;
+  }
+}
+
+async function pushToGitHub(reason = 'Update league data') {
+  const validation = validateGitHubConfig();
+  if (validation) {
+    setSyncStatus(validation, true);
+    return false;
+  }
+  const { owner, repo, branch, path, token } = gitHubSync.config;
+  if (!token) {
+    setSyncStatus('GitHub token required to push changes.', true);
+    return false;
+  }
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  };
+  gitHubSync.isSyncing = true;
+  setSyncStatus('Pushing to GitHub...');
+  try {
+    if (!gitHubSync.lastSha) {
+      const check = await fetch(`${url}?ref=${encodeURIComponent(branch)}`, { headers });
+      if (check.ok) {
+        const existing = await check.json();
+        gitHubSync.lastSha = existing.sha || null;
+      }
+    }
+    const content = encodeToBase64(JSON.stringify(portableState(), null, 2));
+    const body = {
+      message: `${reason} (${new Date().toLocaleString()})`,
+      content,
+      branch
+    };
+    if (gitHubSync.lastSha) body.sha = gitHubSync.lastSha;
+    const res = await fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+      if (res.status === 409) {
+        setSyncStatus('GitHub file changed. Load latest before pushing again.', true);
+        gitHubSync.lastSha = null;
+        persistGitHubConfig();
+        return false;
+      }
+      throw new Error(`GitHub responded with ${res.status}`);
+    }
+    const json = await res.json();
+    gitHubSync.lastSha = json.content?.sha || null;
+    persistGitHubConfig();
+    setSyncStatus('Pushed data to GitHub.');
+    return true;
+  } catch (err) {
+    console.error(err);
+    setSyncStatus('Could not push to GitHub. Check token/repo permissions.', true);
+    return false;
+  } finally {
+    gitHubSync.isSyncing = false;
+  }
+}
+
+function maybeAutoSync(reason) {
+  if (!gitHubSync.config.auto) return;
+  if (!gitHubSync.config.owner || !gitHubSync.config.repo || !gitHubSync.config.token) return;
+  pushToGitHub(reason);
 }
 
 function calculateAllStats() {
@@ -401,6 +549,7 @@ function saveMatch(data) {
   elements.matchMessage.style.color = 'var(--primary)';
   persistState();
   render();
+  maybeAutoSync('Record match');
 }
 
 function renderMatches() {
@@ -469,62 +618,6 @@ function renderMatches() {
 
   elements.matchHistory.innerHTML = '';
   elements.matchHistory.appendChild(clone);
-}
-
-function exportData() {
-  const data = portableState();
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = SYNC_EXPORT_FILENAME;
-  link.click();
-  URL.revokeObjectURL(url);
-  setSyncStatus('Backup downloaded. Import it on another device to sync.');
-}
-
-function importFromFile() {
-  const file = elements.importFile?.files?.[0];
-  if (!file) {
-    setSyncStatus('Select a backup file first.', true);
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const data = JSON.parse(reader.result);
-      const validation = validateImportedData(data);
-      if (validation) {
-        setSyncStatus(validation, true);
-        return;
-      }
-      applyImportedData(data);
-      setSyncStatus('Backup imported successfully.');
-    } catch (err) {
-      setSyncStatus('Could not read backup file.', true);
-    }
-  };
-  reader.readAsText(file);
-}
-
-function importFromShare() {
-  const code = elements.shareCode?.value.trim();
-  if (!code) {
-    setSyncStatus('Paste a share code to import.', true);
-    return;
-  }
-  try {
-    const data = decodeShareCode(code);
-    const validation = validateImportedData(data);
-    if (validation) {
-      setSyncStatus(validation, true);
-      return;
-    }
-    applyImportedData(data);
-    setSyncStatus('Share code imported successfully.');
-  } catch (err) {
-    setSyncStatus('Invalid share code.', true);
-  }
 }
 
 function getPlayerName(id) {
@@ -629,6 +722,7 @@ function clearAllData() {
   state.selectedPlayerId = null;
   localStorage.removeItem(STORAGE_KEY);
   render();
+  maybeAutoSync('Reset data');
 }
 
 function attachEvents() {
@@ -684,27 +778,21 @@ function attachEvents() {
     state.matches = [];
     persistState();
     render();
+    maybeAutoSync('Clear matches');
   });
 
   elements.resetData.addEventListener('click', clearAllData);
 
-  elements.exportData?.addEventListener('click', exportData);
-  elements.importData?.addEventListener('click', importFromFile);
-  elements.copyShare?.addEventListener('click', async () => {
-    if (!elements.shareCode) return;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(elements.shareCode.value);
-      } else {
-        elements.shareCode.select();
-        document.execCommand('copy');
-      }
-      setSyncStatus('Share code copied. Paste it on another device.');
-    } catch (err) {
-      setSyncStatus('Could not copy share code.', true);
-    }
+  ['input', 'change'].forEach(evt => {
+    elements.ghOwner.addEventListener(evt, readGitHubFields);
+    elements.ghRepo.addEventListener(evt, readGitHubFields);
+    elements.ghBranch.addEventListener(evt, readGitHubFields);
+    elements.ghPath.addEventListener(evt, readGitHubFields);
+    elements.ghToken.addEventListener(evt, readGitHubFields);
+    elements.ghAutoSync.addEventListener(evt, readGitHubFields);
   });
-  elements.importShare?.addEventListener('click', importFromShare);
+  elements.ghLoad.addEventListener('click', loadFromGitHub);
+  elements.ghPush.addEventListener('click', () => pushToGitHub('Update from app'));
 }
 
 function render() {
@@ -714,12 +802,13 @@ function render() {
   updateMatchFormAvailability();
   elements.filterFrom.value = state.filters.from || '';
   elements.filterTo.value = state.filters.to || '';
-  updateShareCodeField();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   initElements();
   loadState();
+  loadGitHubConfig();
+  populateGitHubFields();
   attachEvents();
   render();
 });
