@@ -101,16 +101,14 @@ function initElements() {
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
 
-  elements.ghOwner = $('#ghOwner');
-  elements.ghRepo = $('#ghRepo');
   elements.ghBranch = $('#ghBranch');
   elements.ghPath = $('#ghPath');
   elements.ghToken = $('#ghToken');
   elements.ghAutoSync = $('#ghAutoSync');
-  elements.ghUseSite = $('#ghUseSite');
   elements.ghLoad = $('#ghLoad');
   elements.ghPush = $('#ghPush');
   elements.syncStatus = $('#syncStatus');
+  elements.siteRepoDisplay = $('#siteRepoDisplay');
 
   elements.matchForm = $('#matchForm');
   elements.playerA = $('#playerA');
@@ -333,32 +331,38 @@ function setSyncStatus(message, isError = false) {
 }
 
 function populateGitHubFields() {
-  if (!elements.ghOwner) return;
-  elements.ghOwner.value = gitHubSync.config.owner;
-  elements.ghRepo.value = gitHubSync.config.repo;
+  if (!elements.ghBranch) return;
   elements.ghBranch.value = gitHubSync.config.branch;
   elements.ghPath.value = gitHubSync.config.path;
   elements.ghToken.value = gitHubSync.config.token;
   elements.ghAutoSync.checked = gitHubSync.config.auto;
+  if (elements.siteRepoDisplay) {
+    const derived = deriveSiteRepo();
+    if (derived) {
+      elements.siteRepoDisplay.textContent = `Using this site's repo: ${derived.owner}/${derived.repo}`;
+    } else {
+      elements.siteRepoDisplay.textContent = 'Open this on GitHub Pages to sync via the site repo.';
+    }
+  }
 }
 
 function applySiteRepoDefaults(showStatus = false) {
   const derived = deriveSiteRepo();
-  if (!derived) return;
-  let updated = false;
-  if (!gitHubSync.config.owner) { gitHubSync.config.owner = derived.owner; updated = true; }
-  if (!gitHubSync.config.repo) { gitHubSync.config.repo = derived.repo; updated = true; }
-  if (!gitHubSync.config.path) { gitHubSync.config.path = 'data/league.json'; updated = true; }
-  if (updated) {
-    persistGitHubConfig();
-    populateGitHubFields();
-    if (showStatus) setSyncStatus(`Using this site repo: ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
+  if (!derived) {
+    if (showStatus && elements.syncStatus) {
+      setSyncStatus('Open this on GitHub Pages to sync with its repo.', true);
+    }
+    return;
   }
+  gitHubSync.config.owner = derived.owner;
+  gitHubSync.config.repo = derived.repo;
+  if (!gitHubSync.config.path) { gitHubSync.config.path = 'data/league.json'; }
+  persistGitHubConfig();
+  populateGitHubFields();
+  if (showStatus) setSyncStatus(`Using this site repo: ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
 }
 
 function readGitHubFields() {
-  gitHubSync.config.owner = elements.ghOwner.value.trim();
-  gitHubSync.config.repo = elements.ghRepo.value.trim();
   gitHubSync.config.branch = elements.ghBranch.value.trim() || 'main';
   gitHubSync.config.path = elements.ghPath.value.trim() || 'data/league.json';
   gitHubSync.config.token = elements.ghToken.value.trim();
@@ -367,7 +371,10 @@ function readGitHubFields() {
 }
 
 function validateGitHubConfig() {
-  if (!gitHubSync.config.owner || !gitHubSync.config.repo) return 'Owner and repo are required.';
+  const derived = deriveSiteRepo();
+  if (!derived) return 'Open this app from GitHub Pages to sync with the site repo.';
+  gitHubSync.config.owner = derived.owner;
+  gitHubSync.config.repo = derived.repo;
   if (!gitHubSync.config.path.endsWith('.json')) return 'Path should point to a JSON file.';
   return '';
 }
@@ -808,14 +815,11 @@ function attachEvents() {
   elements.resetData.addEventListener('click', clearAllData);
 
   ['input', 'change'].forEach(evt => {
-    elements.ghOwner.addEventListener(evt, readGitHubFields);
-    elements.ghRepo.addEventListener(evt, readGitHubFields);
     elements.ghBranch.addEventListener(evt, readGitHubFields);
     elements.ghPath.addEventListener(evt, readGitHubFields);
     elements.ghToken.addEventListener(evt, readGitHubFields);
     elements.ghAutoSync.addEventListener(evt, readGitHubFields);
   });
-  elements.ghUseSite.addEventListener('click', () => applySiteRepoDefaults(true));
   elements.ghLoad.addEventListener('click', loadFromGitHub);
   elements.ghPush.addEventListener('click', () => pushToGitHub('Update from app'));
 }

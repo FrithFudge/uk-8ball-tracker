@@ -55,14 +55,7 @@
       </div>
 
       <div class="stacked sync-actions">
-        <div class="form-grid two">
-          <label class="input-set">GitHub owner / org
-            <input id="ghOwner" type="text" placeholder="e.g. your-username" autocomplete="username">
-          </label>
-          <label class="input-set">Repo name
-            <input id="ghRepo" type="text" placeholder="e.g. uk-8ball-tracker-data">
-          </label>
-        </div>
+        <div class="repo-banner" id="siteRepoDisplay">Using this site's GitHub repo.</div>
         <div class="form-grid two">
           <label class="input-set">Branch
             <input id="ghBranch" type="text" placeholder="main" value="main">
@@ -78,7 +71,6 @@
         <div class="form-actions">
           <label class="checkbox"> <input type="checkbox" id="ghAutoSync"> Auto-sync after changes</label>
           <div class="button-row">
-            <button type="button" class="ghost" id="ghUseSite">Use this site repo</button>
             <button type="button" class="ghost" id="ghLoad">Load from GitHub</button>
             <button type="button" id="ghPush">Push current data</button>
           </div>
