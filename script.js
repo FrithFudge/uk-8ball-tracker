@@ -194,6 +194,11 @@ function initElements() {
   elements.resetData = $('#resetData');
 }
 
+function isLikelyGoogleClientId(value) {
+  if (!value) return false;
+  return value.includes('.apps.googleusercontent.com');
+}
+
 function updatePlayerCount() {
   elements.playerCount.textContent = `${state.players.filter(p => p.active !== false).length} / 20 players`;
   elements.addPlayer.disabled = state.players.filter(p => p.active !== false).length >= 20;
@@ -574,6 +579,11 @@ function initGoogleSignIn(retry = 0) {
     elements.googleButton.innerHTML = '';
     return;
   }
+  if (!isLikelyGoogleClientId(authState.clientId)) {
+    setAuthError('Client ID looks invalid. Use a Web client ending in .apps.googleusercontent.com and authorize this Pages domain.', true);
+    elements.googleButton.innerHTML = '';
+    return;
+  }
   if (!window.google || !window.google.accounts || !window.google.accounts.id) {
     if (retry < 10) {
       setTimeout(() => initGoogleSignIn(retry + 1), 300);
@@ -599,6 +609,14 @@ function initGoogleSignIn(retry = 0) {
 
 function saveClientId() {
   const value = elements.googleClientId.value.trim();
+  if (!isLikelyGoogleClientId(value)) {
+    setAuthError('Enter the Web client ID from Google Cloud (ends with .apps.googleusercontent.com).', true);
+    elements.googleButton.innerHTML = '';
+    authState.clientId = value;
+    localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, value);
+    persistAuth();
+    return;
+  }
   authState.clientId = value;
   localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, value);
   persistAuth();
