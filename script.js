@@ -25,6 +25,15 @@ const gitHubSync = {
   isSyncing: false
 };
 
+function deriveSiteRepo() {
+  const host = window.location.hostname;
+  const path = window.location.pathname.split('/').filter(Boolean);
+  if (!host.endsWith('github.io')) return null;
+  const owner = host.replace('.github.io', '');
+  const repo = path[0] || `${owner}.github.io`;
+  return { owner, repo };
+}
+
 const $ = (selector) => document.querySelector(selector);
 
 const elements = {};
@@ -98,6 +107,7 @@ function initElements() {
   elements.ghPath = $('#ghPath');
   elements.ghToken = $('#ghToken');
   elements.ghAutoSync = $('#ghAutoSync');
+  elements.ghUseSite = $('#ghUseSite');
   elements.ghLoad = $('#ghLoad');
   elements.ghPush = $('#ghPush');
   elements.syncStatus = $('#syncStatus');
@@ -330,6 +340,20 @@ function populateGitHubFields() {
   elements.ghPath.value = gitHubSync.config.path;
   elements.ghToken.value = gitHubSync.config.token;
   elements.ghAutoSync.checked = gitHubSync.config.auto;
+}
+
+function applySiteRepoDefaults(showStatus = false) {
+  const derived = deriveSiteRepo();
+  if (!derived) return;
+  let updated = false;
+  if (!gitHubSync.config.owner) { gitHubSync.config.owner = derived.owner; updated = true; }
+  if (!gitHubSync.config.repo) { gitHubSync.config.repo = derived.repo; updated = true; }
+  if (!gitHubSync.config.path) { gitHubSync.config.path = 'data/league.json'; updated = true; }
+  if (updated) {
+    persistGitHubConfig();
+    populateGitHubFields();
+    if (showStatus) setSyncStatus(`Using this site repo: ${gitHubSync.config.owner}/${gitHubSync.config.repo}`);
+  }
 }
 
 function readGitHubFields() {
@@ -791,6 +815,7 @@ function attachEvents() {
     elements.ghToken.addEventListener(evt, readGitHubFields);
     elements.ghAutoSync.addEventListener(evt, readGitHubFields);
   });
+  elements.ghUseSite.addEventListener('click', () => applySiteRepoDefaults(true));
   elements.ghLoad.addEventListener('click', loadFromGitHub);
   elements.ghPush.addEventListener('click', () => pushToGitHub('Update from app'));
 }
@@ -808,6 +833,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initElements();
   loadState();
   loadGitHubConfig();
+  applySiteRepoDefaults();
   populateGitHubFields();
   attachEvents();
   render();
