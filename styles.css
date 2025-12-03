@@ -182,6 +182,17 @@ button.danger.ghost {
   gap: 12px;
 }
 
+.auth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.auth-grid .form-actions,
+.auth-grid p.muted.small {
+  grid-column: 1 / -1;
+}
+
 .button-row {
   display: flex;
   gap: 8px;

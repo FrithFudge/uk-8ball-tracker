@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'uk8ball-tracker';
 const GH_CONFIG_KEY = 'uk8ball-tracker-github';
+const AUTH_KEY = 'uk8ball-auth';
 
 const state = {
   players: [],
@@ -23,6 +24,13 @@ const gitHubSync = {
   lastSha: null,
   isSyncing: false,
   pendingPush: null
+};
+
+const authState = {
+  passcode: '',
+  token: '',
+  isLoggedIn: false,
+  passcodeSet: false
 };
 
 function deriveSiteRepo() {
@@ -52,6 +60,19 @@ function loadState() {
   }
 }
 
+function loadAuth() {
+  const raw = localStorage.getItem(AUTH_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    authState.passcode = parsed.passcode || '';
+    authState.passcodeSet = !!parsed.passcode;
+    authState.token = parsed.token || '';
+  } catch (err) {
+    console.error('Failed to parse auth state', err);
+  }
+}
+
 function loadGitHubConfig() {
   const raw = localStorage.getItem(GH_CONFIG_KEY);
   if (!raw) return;
@@ -67,6 +88,10 @@ function loadGitHubConfig() {
 function schedulePush(reason = 'Update league data') {
   if (!deriveSiteRepo()) {
     setSyncStatus('Open this on GitHub Pages to enable auto-sync.', true);
+    return;
+  }
+  if (!authState.isLoggedIn) {
+    setSyncStatus('Login with the team passcode to enable sync.', true);
     return;
   }
   if (!gitHubSync.config.token) {
@@ -85,6 +110,13 @@ function persistState(options = {}) {
     filters: state.filters
   }));
   if (!options.skipSync) schedulePush(options.reason || 'Autosave');
+}
+
+function persistAuth() {
+  localStorage.setItem(AUTH_KEY, JSON.stringify({
+    passcode: authState.passcode,
+    token: authState.token
+  }));
 }
 
 function persistGitHubConfig() {
@@ -114,6 +146,11 @@ function initElements() {
   elements.playerCount = $('#playerCount');
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
+
+  elements.loginPasscode = $('#loginPasscode');
+  elements.loginToken = $('#loginToken');
+  elements.loginBtn = $('#loginBtn');
+  elements.loginMessage = $('#loginMessage');
 
   elements.ghToken = $('#ghToken');
   elements.ghRefresh = $('#ghRefresh');
@@ -338,9 +375,17 @@ function setSyncStatus(message, isError = false) {
   elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
 }
 
+function setLoginMessage(message, isError = false) {
+  if (!elements.loginMessage) return;
+  elements.loginMessage.textContent = message;
+  elements.loginMessage.style.color = isError ? 'var(--danger)' : 'var(--primary)';
+}
+
 function populateGitHubFields() {
   if (!elements.ghToken) return;
-  elements.ghToken.value = gitHubSync.config.token;
+  elements.ghToken.value = authState.isLoggedIn ? gitHubSync.config.token : '';
+  elements.ghToken.disabled = !authState.isLoggedIn;
+  elements.ghToken.placeholder = authState.isLoggedIn ? 'ghp_...' : 'Login to unlock token';
   if (elements.siteRepoDisplay) {
     const derived = deriveSiteRepo();
     if (derived) {
@@ -370,8 +415,78 @@ function applySiteRepoDefaults(showStatus = false) {
 }
 
 function readGitHubFields() {
+  if (!authState.isLoggedIn) {
+    setSyncStatus('Login first to save the repo token.', true);
+    populateGitHubFields();
+    return;
+  }
   gitHubSync.config.token = elements.ghToken.value.trim();
   persistGitHubConfig();
+}
+
+function secureTokenFromConfig() {
+  if (!authState.token && gitHubSync.config.token) {
+    authState.token = gitHubSync.config.token;
+    persistAuth();
+  }
+  if (!authState.isLoggedIn) {
+    gitHubSync.config.token = '';
+  } else if (authState.token) {
+    gitHubSync.config.token = authState.token;
+  }
+  persistGitHubConfig();
+}
+
+function updateLoginUI() {
+  if (!elements.loginBtn) return;
+  elements.loginToken.disabled = false;
+  elements.loginPasscode.placeholder = authState.passcodeSet ? 'Enter team passcode' : 'Set a team passcode';
+  elements.loginBtn.textContent = authState.passcodeSet ? 'Login / Update token' : 'Create passcode & save token';
+  if (!authState.isLoggedIn) {
+    setLoginMessage(authState.passcodeSet ? 'Enter the passcode to unlock sync.' : 'Set a passcode and token to start syncing.');
+  }
+  if (authState.isLoggedIn) {
+    setLoginMessage(authState.token ? 'Logged in. Token stored locally for sync.' : 'Logged in. Add a token to enable sync.');
+    if (authState.token && elements.loginToken && !elements.loginToken.value) {
+      elements.loginToken.placeholder = 'Token stored locally';
+    }
+  }
+  populateGitHubFields();
+}
+
+function handleLogin() {
+  const passcode = elements.loginPasscode.value.trim();
+  const tokenInput = elements.loginToken.value.trim();
+  if (!passcode) {
+    setLoginMessage('Enter the team passcode to continue.', true);
+    return;
+  }
+  if (!authState.passcodeSet) {
+    authState.passcode = passcode;
+    authState.passcodeSet = true;
+  } else if (authState.passcode !== passcode) {
+    setLoginMessage('Incorrect passcode.', true);
+    return;
+  }
+
+  if (tokenInput) {
+    authState.token = tokenInput;
+    gitHubSync.config.token = tokenInput;
+    persistGitHubConfig();
+  } else if (authState.token) {
+    gitHubSync.config.token = authState.token;
+  }
+
+  authState.isLoggedIn = true;
+  persistAuth();
+  setLoginMessage(authState.token ? 'Logged in. Token stored locally for sync.' : 'Logged in. Add a token to enable sync.', !authState.token);
+  populateGitHubFields();
+  if (authState.token) {
+    setSyncStatus('Ready to sync with stored token.');
+    schedulePush('Login sync');
+  } else {
+    setSyncStatus('Login saved. Add a token to sync.', true);
+  }
 }
 
 function validateGitHubConfig() {
@@ -814,6 +929,16 @@ function attachEvents() {
 
   elements.resetData.addEventListener('click', clearAllData);
 
+  elements.loginBtn.addEventListener('click', handleLogin);
+  ['keypress'].forEach(evt => {
+    elements.loginPasscode.addEventListener(evt, (e) => {
+      if (e.key === 'Enter') handleLogin();
+    });
+    elements.loginToken.addEventListener(evt, (e) => {
+      if (e.key === 'Enter') handleLogin();
+    });
+  });
+
   ['input', 'change'].forEach(evt => {
     elements.ghToken.addEventListener(evt, () => {
       readGitHubFields();
@@ -835,9 +960,12 @@ function render() {
 document.addEventListener('DOMContentLoaded', () => {
   initElements();
   loadState();
+  loadAuth();
   loadGitHubConfig();
+  secureTokenFromConfig();
   applySiteRepoDefaults();
   populateGitHubFields();
+  updateLoginUI();
   attachEvents();
   render();
   loadFromGitHub({ silent: true });

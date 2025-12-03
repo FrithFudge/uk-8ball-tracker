@@ -19,6 +19,29 @@
   </header>
 
   <main class="layout">
+    <section class="panel slim" aria-labelledby="login-heading">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Team login</p>
+          <h2 id="login-heading">Sync access</h2>
+        </div>
+        <p class="muted small">Use a shared passcode to unlock the repo token for auto-sync.</p>
+      </div>
+      <div class="stacked auth-grid">
+        <label class="input-set">Team passcode
+          <input id="loginPasscode" type="password" placeholder="Enter shared passcode" autocomplete="current-password">
+        </label>
+        <label class="input-set">GitHub token (stored locally after login)
+          <input id="loginToken" type="password" placeholder="ghp_..." autocomplete="off">
+        </label>
+        <div class="form-actions">
+          <p id="loginMessage" class="muted small"></p>
+          <button type="button" id="loginBtn">Login / Save token</button>
+        </div>
+        <p class="muted small">Passcode protects the token locally; you can change the token any time after logging in.</p>
+      </div>
+    </section>
+
     <section class="panel" aria-labelledby="player-management-heading">
       <div class="panel-header">
         <div>
