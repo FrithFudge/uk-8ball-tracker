@@ -60,14 +60,14 @@
           <p class="muted small" id="sessionInfo">Sign in to manage the shared token.</p>
         </div>
         <div class="stacked auth-grid">
-          <label class="input-set">GitHub token (stored locally after login)
+          <label class="input-set">GitHub token (session-only; never stored)
             <input id="loginToken" type="password" placeholder="ghp_..." autocomplete="off">
           </label>
           <div class="form-actions">
             <p id="loginMessage" class="muted small"></p>
             <button type="button" id="loginBtn">Save token</button>
           </div>
-          <p class="muted small">Tokens stay on this device and are used for minute-by-minute sync.</p>
+          <p class="muted small">Tokens stay in-memory for this session and are never written to localStorage.</p>
         </div>
       </section>
 

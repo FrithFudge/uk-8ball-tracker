@@ -69,9 +69,10 @@ function loadAuth() {
   try {
     const parsed = JSON.parse(raw);
     authState.user = parsed.user || null;
-    authState.token = parsed.token || '';
     authState.isLoggedIn = !!parsed.user;
     authState.clientId = parsed.clientId || '';
+    // Token is intentionally not persisted; clear any legacy token from storage
+    if (parsed.token) persistAuth();
   } catch (err) {
     console.error('Failed to parse auth state', err);
   }
@@ -94,8 +95,10 @@ function loadGitHubConfig() {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    gitHubSync.config = { ...gitHubSync.config, token: parsed.token || '', path: parsed.path || 'data/league.json', branch: parsed.branch || 'main' };
+    gitHubSync.config = { ...gitHubSync.config, path: parsed.path || 'data/league.json', branch: parsed.branch || 'main' };
     gitHubSync.lastSha = parsed.lastSha || null;
+    // Strip any legacy token stored on disk
+    if (parsed.token) persistGitHubConfig();
   } catch (err) {
     console.error('Failed to parse GitHub config', err);
   }
@@ -131,13 +134,12 @@ function persistState(options = {}) {
 function persistAuth() {
   localStorage.setItem(AUTH_KEY, JSON.stringify({
     user: authState.user,
-    token: authState.token,
     clientId: authState.clientId
   }));
 }
 
 function persistGitHubConfig() {
-  const payload = { token: gitHubSync.config.token, path: gitHubSync.config.path, branch: gitHubSync.config.branch, lastSha: gitHubSync.lastSha };
+  const payload = { path: gitHubSync.config.path, branch: gitHubSync.config.branch, lastSha: gitHubSync.lastSha };
   localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(payload));
 }
 
@@ -441,15 +443,8 @@ function applySiteRepoDefaults(showStatus = false) {
 }
 
 function secureTokenFromConfig() {
-  if (!authState.token && gitHubSync.config.token) {
-    authState.token = gitHubSync.config.token;
-    persistAuth();
-  }
-  if (!authState.isLoggedIn) {
-    gitHubSync.config.token = '';
-  } else if (authState.token) {
-    gitHubSync.config.token = authState.token;
-  }
+  // Token remains memory-only; clear any persisted copy
+  gitHubSync.config.token = authState.isLoggedIn ? authState.token : '';
   persistGitHubConfig();
 }
 
@@ -459,33 +454,31 @@ function updateLoginUI() {
   elements.sessionInfo.textContent = loggedText;
   elements.loginToken.disabled = !authState.isLoggedIn;
   elements.loginBtn.disabled = !authState.isLoggedIn;
-  elements.loginToken.placeholder = authState.isLoggedIn && authState.token ? 'Token stored locally' : 'ghp_...';
+  elements.loginToken.placeholder = authState.isLoggedIn && authState.token ? 'Token kept for this session' : 'ghp_...';
   if (!authState.isLoggedIn) {
-    setLoginMessage('Login with Google to manage the sync token.', true);
+    setLoginMessage('Login with Google to enable sync.', true);
   } else if (authState.token) {
-    setLoginMessage('Token stored locally for sync.');
+    setLoginMessage('Token ready for this session. Not saved to disk.');
   } else {
-    setLoginMessage('Add a GitHub token to enable sync.', true);
+    setLoginMessage('Add a GitHub token for this session to enable sync.', true);
   }
   populateGitHubFields();
 }
 
 function handleTokenSave() {
   if (!authState.isLoggedIn) {
-    setLoginMessage('Sign in before saving a token.', true);
+    setLoginMessage('Sign in before adding a token.', true);
     return;
   }
   const tokenInput = elements.loginToken.value.trim();
   if (tokenInput) {
     authState.token = tokenInput;
     gitHubSync.config.token = tokenInput;
-    persistGitHubConfig();
-    persistAuth();
-    setLoginMessage('Token saved locally for sync.');
-    setSyncStatus('Ready to sync with stored token.');
+    setLoginMessage('Token captured for this session only.');
+    setSyncStatus('Ready to sync for this session. Token not saved.');
     schedulePush('Login sync');
   } else {
-    setLoginMessage('Enter a token to store for sync.', true);
+    setLoginMessage('Enter a token to enable sync this session.', true);
   }
 }
 
@@ -648,6 +641,7 @@ function resetClientId() {
 function handleLogout() {
   authState.user = null;
   authState.isLoggedIn = false;
+  authState.token = '';
   gitHubSync.config.token = '';
   persistGitHubConfig();
   persistAuth();
