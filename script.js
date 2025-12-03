@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'uk8ball-tracker';
+const SYNC_EXPORT_FILENAME = 'uk8ball-tracker-backup.json';
 
 const state = {
   players: [],
@@ -38,6 +39,38 @@ function persistState() {
   }));
 }
 
+function portableState() {
+  return {
+    players: state.players,
+    matches: state.matches,
+    selectedPlayerId: null,
+    filters: { playerId: 'all', from: '', to: '' }
+  };
+}
+
+function encodeShareCode(data) {
+  const json = JSON.stringify(data);
+  try {
+    return btoa(unescape(encodeURIComponent(json)));
+  } catch (err) {
+    console.error('Failed to encode share code', err);
+    return json;
+  }
+}
+
+function decodeShareCode(code) {
+  try {
+    const decoded = atob(code);
+    return JSON.parse(decodeURIComponent(escape(decoded)));
+  } catch (err) {
+    try {
+      return JSON.parse(code);
+    } catch (inner) {
+      throw err;
+    }
+  }
+}
+
 function uid() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return 'id-' + Date.now().toString(16) + Math.random().toString(16).slice(2);
@@ -51,6 +84,14 @@ function initElements() {
   elements.playerCount = $('#playerCount');
   elements.duplicateWarning = $('#duplicateWarning');
   elements.playerList = $('#playerList');
+
+  elements.exportData = $('#exportData');
+  elements.importData = $('#importData');
+  elements.importFile = $('#importFile');
+  elements.shareCode = $('#shareCode');
+  elements.copyShare = $('#copyShare');
+  elements.importShare = $('#importShare');
+  elements.syncStatus = $('#syncStatus');
 
   elements.matchForm = $('#matchForm');
   elements.playerA = $('#playerA');
@@ -239,6 +280,43 @@ function defaultStats() {
   };
 }
 
+function validateImportedData(data) {
+  if (!data || typeof data !== 'object') return 'Invalid backup format.';
+  if (!Array.isArray(data.players) || !Array.isArray(data.matches)) return 'Backup must include players and matches arrays.';
+  if (data.players.length > 20) return 'Backup contains more than 20 players.';
+  const ids = new Set();
+  for (const player of data.players) {
+    if (!player.id || ids.has(player.id)) return 'Player IDs must be unique.';
+    ids.add(player.id);
+  }
+  const validMatches = data.matches.filter(m => ids.has(m.playerAId) && ids.has(m.playerBId));
+  if (validMatches.length !== data.matches.length) {
+    data.matches = validMatches;
+  }
+  return '';
+}
+
+function applyImportedData(data) {
+  state.players = data.players || [];
+  state.matches = data.matches || [];
+  state.selectedPlayerId = null;
+  state.filters = { playerId: 'all', from: '', to: '' };
+  persistState();
+  render();
+}
+
+function updateShareCodeField() {
+  if (!elements.shareCode) return;
+  const code = encodeShareCode(portableState());
+  elements.shareCode.value = code;
+}
+
+function setSyncStatus(message, isError = false) {
+  if (!elements.syncStatus) return;
+  elements.syncStatus.textContent = message;
+  elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
+}
+
 function calculateAllStats() {
   const statsMap = {};
   state.players.forEach(p => { statsMap[p.id] = defaultStats(); });
@@ -391,6 +469,62 @@ function renderMatches() {
 
   elements.matchHistory.innerHTML = '';
   elements.matchHistory.appendChild(clone);
+}
+
+function exportData() {
+  const data = portableState();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = SYNC_EXPORT_FILENAME;
+  link.click();
+  URL.revokeObjectURL(url);
+  setSyncStatus('Backup downloaded. Import it on another device to sync.');
+}
+
+function importFromFile() {
+  const file = elements.importFile?.files?.[0];
+  if (!file) {
+    setSyncStatus('Select a backup file first.', true);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const validation = validateImportedData(data);
+      if (validation) {
+        setSyncStatus(validation, true);
+        return;
+      }
+      applyImportedData(data);
+      setSyncStatus('Backup imported successfully.');
+    } catch (err) {
+      setSyncStatus('Could not read backup file.', true);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function importFromShare() {
+  const code = elements.shareCode?.value.trim();
+  if (!code) {
+    setSyncStatus('Paste a share code to import.', true);
+    return;
+  }
+  try {
+    const data = decodeShareCode(code);
+    const validation = validateImportedData(data);
+    if (validation) {
+      setSyncStatus(validation, true);
+      return;
+    }
+    applyImportedData(data);
+    setSyncStatus('Share code imported successfully.');
+  } catch (err) {
+    setSyncStatus('Invalid share code.', true);
+  }
 }
 
 function getPlayerName(id) {
@@ -553,6 +687,24 @@ function attachEvents() {
   });
 
   elements.resetData.addEventListener('click', clearAllData);
+
+  elements.exportData?.addEventListener('click', exportData);
+  elements.importData?.addEventListener('click', importFromFile);
+  elements.copyShare?.addEventListener('click', async () => {
+    if (!elements.shareCode) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(elements.shareCode.value);
+      } else {
+        elements.shareCode.select();
+        document.execCommand('copy');
+      }
+      setSyncStatus('Share code copied. Paste it on another device.');
+    } catch (err) {
+      setSyncStatus('Could not copy share code.', true);
+    }
+  });
+  elements.importShare?.addEventListener('click', importFromShare);
 }
 
 function render() {
@@ -562,6 +714,7 @@ function render() {
   updateMatchFormAvailability();
   elements.filterFrom.value = state.filters.from || '';
   elements.filterTo.value = state.filters.to || '';
+  updateShareCodeField();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

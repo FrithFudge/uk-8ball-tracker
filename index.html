@@ -45,6 +45,44 @@
       <div id="playerList" class="table-wrapper"></div>
     </section>
 
+    <section class="panel" aria-labelledby="sync-heading">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Backup &amp; Sync</p>
+          <h2 id="sync-heading">Move data between devices</h2>
+        </div>
+        <p class="muted small">Export a backup or import from another device.</p>
+      </div>
+
+      <div class="stacked sync-actions">
+        <div class="form-grid two">
+          <div class="input-set">
+            <label class="muted small">Download backup</label>
+            <button type="button" id="exportData">Export JSON</button>
+            <p class="muted small">Save this file and open it on another device to import.</p>
+          </div>
+          <div class="input-set">
+            <label class="muted small">Import backup (.json)</label>
+            <input type="file" id="importFile" accept="application/json,.json">
+            <button type="button" id="importData">Import file</button>
+          </div>
+        </div>
+
+        <label class="input-set">
+          Share code (copy/paste between devices)
+          <textarea id="shareCode" rows="3" spellcheck="false"></textarea>
+        </label>
+        <div class="form-actions">
+          <div class="muted small">Copy this code to your new device, paste it here, then import.</div>
+          <div class="button-row">
+            <button type="button" class="ghost" id="copyShare">Copy code</button>
+            <button type="button" id="importShare">Import from code</button>
+          </div>
+        </div>
+        <p id="syncStatus" class="muted small"></p>
+      </div>
+    </section>
+
     <section class="panel" aria-labelledby="new-match-heading">
       <div class="panel-header">
         <div>
