@@ -2,6 +2,7 @@ const STORAGE_KEY = 'uk8ball-tracker';
 const GH_CONFIG_KEY = 'uk8ball-tracker-github';
 const AUTH_KEY = 'uk8ball-auth';
 const GOOGLE_CLIENT_STORAGE_KEY = 'uk8ball-google-client';
+const DEFAULT_GOOGLE_CLIENT_ID = '612621144566-r5otun40sr26fh4oftbvkre43a0rdg2b.apps.googleusercontent.com';
 
 const state = {
   players: [],
@@ -73,6 +74,18 @@ function loadAuth() {
     authState.clientId = parsed.clientId || '';
   } catch (err) {
     console.error('Failed to parse auth state', err);
+  }
+}
+
+function ensureDefaultClientId() {
+  if (!authState.clientId && DEFAULT_GOOGLE_CLIENT_ID) {
+    authState.clientId = DEFAULT_GOOGLE_CLIENT_ID;
+    localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, DEFAULT_GOOGLE_CLIENT_ID);
+    persistAuth();
+  }
+  const storedClientId = localStorage.getItem(GOOGLE_CLIENT_STORAGE_KEY);
+  if (!storedClientId && authState.clientId) {
+    localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, authState.clientId);
   }
 }
 
@@ -1108,6 +1121,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initElements();
   loadState();
   loadAuth();
+  ensureDefaultClientId();
   loadGitHubConfig();
   secureTokenFromConfig();
   applySiteRepoDefaults();
