@@ -212,30 +212,31 @@ function initElements() {
 
 function updatePlayerCount() {
   const activeAllowed = state.players.filter(p => p.active !== false && isAllowedPlayerName(p.name)).length;
-  elements.playerCount.textContent = `${activeAllowed} / ${MAX_PLAYERS} fixed players`;
-  const remaining = remainingRosterOptions();
-  elements.addPlayer.disabled = remaining.length === 0;
-  if (elements.playerName) {
-    elements.playerName.disabled = remaining.length === 0;
+  if (elements.playerCount) {
+    elements.playerCount.textContent = `${activeAllowed} / ${MAX_PLAYERS} fixed players`;
   }
 }
 
 function addPlayer(name, nickname) {
   if (!isAllowedPlayerName(name)) {
-    elements.duplicateWarning.textContent = 'Roster is locked to Connor, Dave, AJ and Trav.';
+    if (elements.duplicateWarning) {
+      elements.duplicateWarning.textContent = 'Roster is locked to Connor, Dave, AJ and Trav.';
+    }
     return false;
   }
   const exists = state.players.some(p => p.name.toLowerCase() === name.toLowerCase());
   if (exists) {
-    elements.duplicateWarning.textContent = 'That player name already exists.';
+    if (elements.duplicateWarning) {
+      elements.duplicateWarning.textContent = 'That player name already exists.';
+    }
     return false;
   }
   const player = { id: uid(), name: name.trim(), nickname: nickname.trim(), active: true, createdAt: new Date().toISOString() };
   state.players.push(player);
   persistState({ reason: 'Add player' });
   render();
-  elements.playerForm.reset();
-  elements.duplicateWarning.textContent = '';
+  if (elements.playerForm) elements.playerForm.reset();
+  if (elements.duplicateWarning) elements.duplicateWarning.textContent = '';
   updatePlayerNameOptions();
   return true;
 }
@@ -922,7 +923,7 @@ function updateMatchFormAvailability() {
   [elements.playerA, elements.playerB, elements.raceTo, elements.framesA, elements.framesB, elements.outcome, elements.note, elements.saveMatch]
     .forEach(el => { if (el) el.disabled = !enoughPlayers; });
   if (!enoughPlayers) {
-    elements.matchMessage.textContent = 'Add at least two players to record a match.';
+    elements.matchMessage.textContent = 'Roster unavailable. Reset data to restore the fixed four players.';
     elements.matchMessage.style.color = 'var(--warning)';
   } else {
     elements.matchMessage.textContent = '';
@@ -940,14 +941,16 @@ function clearAllData() {
 }
 
 function attachEvents() {
-  elements.playerForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const name = elements.playerName.value.trim();
-    const nickname = elements.playerNickname.value.trim();
-    if (!name) return;
-    if (state.players.filter(p => p.active !== false && isAllowedPlayerName(p.name)).length >= MAX_PLAYERS) return;
-    addPlayer(name, nickname);
-  });
+  if (elements.playerForm) {
+    elements.playerForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = elements.playerName.value.trim();
+      const nickname = elements.playerNickname.value.trim();
+      if (!name) return;
+      if (state.players.filter(p => p.active !== false && isAllowedPlayerName(p.name)).length >= MAX_PLAYERS) return;
+      addPlayer(name, nickname);
+    });
+  }
 
   elements.matchForm.addEventListener('submit', (e) => {
     e.preventDefault();
