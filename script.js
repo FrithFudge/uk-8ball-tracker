@@ -1,10 +1,14 @@
 const STORAGE_KEY = 'uk8ball-tracker';
 const AUTH_KEY = 'uk8ball-auth';
-const GOOGLE_CLIENT_STORAGE_KEY = 'uk8ball-google-client';
-const DEFAULT_GOOGLE_CLIENT_ID = '612621144566-r5otun40sr26fh4oftbvkre43a0rdg2b.apps.googleusercontent.com';
 const SUPABASE_KEY = 'uk8ball-supabase-config';
 const DEFAULT_SUPABASE_KEY = 'sbp_915dde8d730655f8b743d5575a750a41ee4abbaf';
 const SUPABASE_SYNC_INTERVAL = 60000;
+const TEAM_ACCOUNTS = [
+  { id: 'connor', name: 'Connor', passcode: 'connor123' },
+  { id: 'dave', name: 'Dave', passcode: 'dave123' },
+  { id: 'aj', name: 'AJ', passcode: 'aj123' },
+  { id: 'trav', name: 'Trav', passcode: 'trav123' }
+];
 const FIXED_ROSTER = [
   { name: 'Connor', nickname: '' },
   { name: 'Dave', nickname: '' },
@@ -27,9 +31,7 @@ const state = {
 
 const authState = {
   user: null,
-  token: '',
-  isLoggedIn: false,
-  clientId: ''
+  isLoggedIn: false
 };
 
 const supabaseState = {
@@ -69,11 +71,10 @@ function loadAuth() {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    authState.user = parsed.user || null;
-    authState.isLoggedIn = !!parsed.user;
-    authState.clientId = parsed.clientId || '';
-    // Token is intentionally not persisted; clear any legacy token from storage
-    if (parsed.token) persistAuth();
+    const savedUser = parsed.user;
+    const validAccount = TEAM_ACCOUNTS.find(acc => acc.id === savedUser?.id);
+    authState.user = validAccount ? { name: validAccount.name, id: validAccount.id } : null;
+    authState.isLoggedIn = !!authState.user;
   } catch (err) {
     console.error('Failed to parse auth state', err);
   }
@@ -102,18 +103,6 @@ function persistSupabaseConfig() {
     key: supabaseState.config.key,
     league: supabaseState.config.league
   }));
-}
-
-function ensureDefaultClientId() {
-  if (!authState.clientId && DEFAULT_GOOGLE_CLIENT_ID) {
-    authState.clientId = DEFAULT_GOOGLE_CLIENT_ID;
-    localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, DEFAULT_GOOGLE_CLIENT_ID);
-    persistAuth();
-  }
-  const storedClientId = localStorage.getItem(GOOGLE_CLIENT_STORAGE_KEY);
-  if (!storedClientId && authState.clientId) {
-    localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, authState.clientId);
-  }
 }
 
 function isAllowedPlayerName(name) {
@@ -169,8 +158,7 @@ function persistState(options = {}) {
 
 function persistAuth() {
   localStorage.setItem(AUTH_KEY, JSON.stringify({
-    user: authState.user,
-    clientId: authState.clientId
+    user: authState.user
   }));
 }
 
@@ -280,10 +268,9 @@ function initElements() {
   elements.appContent = $('#appContent');
   elements.authOverlay = $('#authOverlay');
   elements.authError = $('#authError');
-  elements.googleButton = $('#googleButton');
-  elements.googleClientId = $('#googleClientId');
-  elements.saveClientId = $('#saveClientId');
-  elements.resetClientId = $('#resetClientId');
+  elements.loginForm = $('#loginForm');
+  elements.loginUser = $('#loginUser');
+  elements.loginPass = $('#loginPass');
   elements.userBadge = $('#userBadge');
   elements.userAvatar = $('#userAvatar');
   elements.userName = $('#userName');
@@ -329,11 +316,6 @@ function initElements() {
 
   elements.clearMatches = $('#clearMatches');
   elements.resetData = $('#resetData');
-}
-
-function isLikelyGoogleClientId(value) {
-  if (!value) return false;
-  return value.includes('.apps.googleusercontent.com');
 }
 
 function updatePlayerCount() {
@@ -618,17 +600,6 @@ function scheduleSupabasePush() {
   }, 1500);
 }
 
-function decodeJwt(token) {
-  try {
-    const [, payload] = token.split('.');
-    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-    return JSON.parse(decodeURIComponent(escape(json)));
-  } catch (err) {
-    console.error('Failed to decode JWT', err);
-    return null;
-  }
-}
-
 function setAuthVisibility() {
   if (authState.isLoggedIn) {
     elements.appContent.classList.remove('hidden');
@@ -668,95 +639,47 @@ function setAuthError(message, isError = true) {
   elements.authError.classList.toggle('error', isError);
 }
 
-function handleGoogleCredential(response) {
-  const profile = decodeJwt(response.credential);
-  if (!profile) {
-    setAuthError('Unable to read Google response. Check your Client ID.', true);
+function populateLoginChoices() {
+  if (!elements.loginUser) return;
+  elements.loginUser.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Select your account';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  elements.loginUser.appendChild(placeholder);
+  TEAM_ACCOUNTS.forEach(account => {
+    const opt = document.createElement('option');
+    opt.value = account.id;
+    opt.textContent = account.name;
+    elements.loginUser.appendChild(opt);
+  });
+}
+
+function handleLoginSubmit(event) {
+  event.preventDefault();
+  const userId = elements.loginUser.value;
+  const pass = elements.loginPass.value.trim();
+  const account = TEAM_ACCOUNTS.find(acc => acc.id === userId);
+  if (!account) {
+    setAuthError('Choose a player account to continue.', true);
     return;
   }
-  authState.user = {
-    name: profile.name || profile.email || 'Signed in',
-    email: profile.email || '',
-    picture: profile.picture || '',
-    provider: 'google',
-    sub: profile.sub
-  };
+  if (pass !== account.passcode) {
+    setAuthError('Incorrect passcode. Please try again.', true);
+    return;
+  }
+  authState.user = { name: account.name, id: account.id };
   authState.isLoggedIn = true;
   persistAuth();
   setAuthVisibility();
-  setSyncStatus('Signed in. Connecting to Supabase if configured.');
+  setSyncStatus('Signed in.');
   startSupabaseInterval();
-}
-
-function initGoogleSignIn(retry = 0) {
-  if (!elements.googleClientId) return;
-  const stored = localStorage.getItem(GOOGLE_CLIENT_STORAGE_KEY);
-  if (!authState.clientId && stored) authState.clientId = stored;
-  if (authState.clientId && !elements.googleClientId.value) {
-    elements.googleClientId.value = authState.clientId;
-  }
-  if (!authState.clientId) {
-    setAuthError('Add a Google Client ID to enable sign-in.', true);
-    elements.googleButton.innerHTML = '';
-    return;
-  }
-  if (!isLikelyGoogleClientId(authState.clientId)) {
-    setAuthError('Client ID looks invalid. Use a Web client ending in .apps.googleusercontent.com and authorize this Pages domain.', true);
-    elements.googleButton.innerHTML = '';
-    return;
-  }
-  if (!window.google || !window.google.accounts || !window.google.accounts.id) {
-    if (retry < 10) {
-      setTimeout(() => initGoogleSignIn(retry + 1), 300);
-      return;
-    }
-    setAuthError('Google sign-in library not ready. Check your network.', true);
-    return;
-  }
-  elements.googleButton.innerHTML = '';
-  window.google.accounts.id.initialize({
-    client_id: authState.clientId,
-    callback: handleGoogleCredential,
-    auto_select: false
-  });
-  window.google.accounts.id.renderButton(elements.googleButton, {
-    theme: 'outline',
-    size: 'large',
-    type: 'standard',
-    shape: 'pill'
-  });
-  setAuthError('Use Google to continue.', false);
-}
-
-function saveClientId() {
-  const value = elements.googleClientId.value.trim();
-  if (!isLikelyGoogleClientId(value)) {
-    setAuthError('Enter the Web client ID from Google Cloud (ends with .apps.googleusercontent.com).', true);
-    elements.googleButton.innerHTML = '';
-    authState.clientId = value;
-    localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, value);
-    persistAuth();
-    return;
-  }
-  authState.clientId = value;
-  localStorage.setItem(GOOGLE_CLIENT_STORAGE_KEY, value);
-  persistAuth();
-  initGoogleSignIn();
-}
-
-function resetClientId() {
-  authState.clientId = '';
-  localStorage.removeItem(GOOGLE_CLIENT_STORAGE_KEY);
-  elements.googleClientId.value = '';
-  elements.googleButton.innerHTML = '';
-  persistAuth();
-  setAuthError('Client ID cleared. Add one to sign in.', true);
 }
 
 function handleLogout() {
   authState.user = null;
   authState.isLoggedIn = false;
-  authState.token = '';
   persistAuth();
   setAuthVisibility();
   if (supabaseState.intervalId) clearInterval(supabaseState.intervalId);
@@ -1115,8 +1038,7 @@ function attachEvents() {
 
   elements.resetData.addEventListener('click', clearAllData);
   elements.logoutBtn.addEventListener('click', handleLogout);
-  elements.saveClientId.addEventListener('click', saveClientId);
-  elements.resetClientId.addEventListener('click', resetClientId);
+  elements.loginForm.addEventListener('submit', handleLoginSubmit);
   elements.saveSupabase.addEventListener('click', saveSupabaseConfigFromInputs);
   elements.testSupabase.addEventListener('click', testSupabaseConnection);
   elements.clearSupabase.addEventListener('click', clearSupabaseConfig);
@@ -1139,11 +1061,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   loadAuth();
   loadSupabaseConfig();
-  ensureDefaultClientId();
   setAuthVisibility();
+  populateLoginChoices();
   attachEvents();
   render();
-  initGoogleSignIn();
   updateSupabaseInputs();
   setSyncStatus('Data saved locally in this browser.');
   startSupabaseInterval();

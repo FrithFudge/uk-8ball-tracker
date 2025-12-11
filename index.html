@@ -6,25 +6,28 @@
   <title>UK 8-Ball Pool League Tracker</title>
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <div id="authOverlay" class="auth-overlay">
     <div class="auth-card">
       <p class="eyebrow">Secure access</p>
-      <h1>Sign in to view the league</h1>
-      <p class="muted">Use Google sign-in to unlock the tracker. Apple ID requires separate configuration.</p>
-      <label class="input-set">Google Client ID
-        <input id="googleClientId" type="text" value="612621144566-r5otun40sr26fh4oftbvkre43a0rdg2b.apps.googleusercontent.com" placeholder="Paste your Google client ID">
-      </label>
-      <p class="muted small">A default Web client ID is preloaded for this site. Replace it if you maintain your own OAuth credentials. Ensure it ends with <code>.apps.googleusercontent.com</code> and add your Pages domain to authorized JavaScript origins.</p>
-      <div class="pill-row">
-        <button id="saveClientId" type="button">Save client ID</button>
-        <button id="resetClientId" type="button" class="ghost">Reset</button>
-      </div>
-      <div id="googleButton" class="google-button-slot"></div>
-      <button id="applePlaceholder" type="button" class="ghost" disabled>Sign in with Apple (configure separately)</button>
-      <p id="authError" class="muted small"></p>
+      <h1>Team login</h1>
+      <p class="muted">Use one of the four player accounts to unlock the tracker. Credentials are stored locally for convenience.</p>
+      <form id="loginForm" class="stacked">
+        <div class="form-grid">
+          <label class="input-set">Player
+            <select id="loginUser" required></select>
+          </label>
+          <label class="input-set">Passcode
+            <input id="loginPass" type="password" placeholder="Enter passcode" autocomplete="current-password" required>
+          </label>
+        </div>
+        <div class="form-actions">
+          <p id="authError" class="muted small"></p>
+          <button type="submit">Sign in</button>
+        </div>
+      </form>
+      <p class="muted small">Default passcodes can be updated in code if needed. Current accounts: Connor, Dave, AJ, Trav.</p>
     </div>
   </div>
 
