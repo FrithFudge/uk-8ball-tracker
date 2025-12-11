@@ -85,12 +85,13 @@
           <p class="eyebrow">Roster</p>
           <h2 id="player-management-heading">Player Management</h2>
         </div>
-        <p class="muted" id="playerCount">0 / 20 players</p>
+        <p class="muted" id="playerCount">0 / 4 fixed players</p>
       </div>
+      <p class="muted small">Roster is fixed to Connor, Dave, AJ and Trav. Add any missing names to unlock match entry.</p>
       <form id="playerForm" class="stacked">
         <div class="form-grid">
-          <label class="input-set">Name
-            <input id="playerName" name="name" type="text" placeholder="e.g. Alex" required>
+          <label class="input-set">Choose player to add
+            <select id="playerName" name="name" required></select>
           </label>
           <label class="input-set">Nickname / Initials (optional)
             <input id="playerNickname" name="nickname" type="text" placeholder="e.g. The Magician">

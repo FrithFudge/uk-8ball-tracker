@@ -5,6 +5,13 @@ const DEFAULT_GOOGLE_CLIENT_ID = '612621144566-r5otun40sr26fh4oftbvkre43a0rdg2b.
 const SUPABASE_KEY = 'uk8ball-supabase-config';
 const DEFAULT_SUPABASE_KEY = 'sbp_915dde8d730655f8b743d5575a750a41ee4abbaf';
 const SUPABASE_SYNC_INTERVAL = 60000;
+const FIXED_ROSTER = [
+  { name: 'Connor', nickname: '' },
+  { name: 'Dave', nickname: '' },
+  { name: 'AJ', nickname: '' },
+  { name: 'Trav', nickname: '' }
+];
+const MAX_PLAYERS = FIXED_ROSTER.length;
 
 const state = {
   players: [],
@@ -109,6 +116,43 @@ function ensureDefaultClientId() {
   }
 }
 
+function isAllowedPlayerName(name) {
+  if (!name) return false;
+  return FIXED_ROSTER.some(p => p.name.toLowerCase() === name.toLowerCase());
+}
+
+function seedFixedRoster() {
+  let added = false;
+  const existingByName = new Map(state.players.map(p => [p.name.toLowerCase(), p]));
+
+  FIXED_ROSTER.forEach(({ name, nickname }) => {
+    const key = name.toLowerCase();
+    if (existingByName.has(key)) {
+      const existing = existingByName.get(key);
+      if (existing.active === false) {
+        existing.active = true;
+        delete existing.archivedAt;
+        added = true;
+      }
+      return;
+    }
+    state.players.push({
+      id: `fixed-${key}`,
+      name,
+      nickname: nickname || '',
+      active: true,
+      createdAt: new Date().toISOString()
+    });
+    added = true;
+  });
+  return added;
+}
+
+function remainingRosterOptions() {
+  const existingNames = new Set(state.players.map(p => p.name.toLowerCase()));
+  return FIXED_ROSTER.filter(p => !existingNames.has(p.name.toLowerCase()));
+}
+
 function persistState(options = {}) {
   if (!options.skipTimestamp) {
     state.updatedAt = Date.now();
@@ -201,6 +245,7 @@ function applyRemoteState(payload, source = 'Supabase') {
   state.filters = { playerId: 'all', from: '', to: '' };
   state.selectedPlayerId = null;
   state.updatedAt = payload.updatedAt || Date.now();
+  seedFixedRoster();
   persistState({ skipTimestamp: true, skipSync: true });
   render();
   setSyncStatus(`State refreshed from ${source}.`);
@@ -292,11 +337,20 @@ function isLikelyGoogleClientId(value) {
 }
 
 function updatePlayerCount() {
-  elements.playerCount.textContent = `${state.players.filter(p => p.active !== false).length} / 20 players`;
-  elements.addPlayer.disabled = state.players.filter(p => p.active !== false).length >= 20;
+  const activeAllowed = state.players.filter(p => p.active !== false && isAllowedPlayerName(p.name)).length;
+  elements.playerCount.textContent = `${activeAllowed} / ${MAX_PLAYERS} fixed players`;
+  const remaining = remainingRosterOptions();
+  elements.addPlayer.disabled = remaining.length === 0;
+  if (elements.playerName) {
+    elements.playerName.disabled = remaining.length === 0;
+  }
 }
 
 function addPlayer(name, nickname) {
+  if (!isAllowedPlayerName(name)) {
+    elements.duplicateWarning.textContent = 'Roster is locked to Connor, Dave, AJ and Trav.';
+    return false;
+  }
   const exists = state.players.some(p => p.name.toLowerCase() === name.toLowerCase());
   if (exists) {
     elements.duplicateWarning.textContent = 'That player name already exists.';
@@ -308,6 +362,7 @@ function addPlayer(name, nickname) {
   render();
   elements.playerForm.reset();
   elements.duplicateWarning.textContent = '';
+  updatePlayerNameOptions();
   return true;
 }
 
@@ -347,11 +402,43 @@ function buildPlayerOptions(selectEl, includeAll = false) {
   });
 }
 
+function updatePlayerNameOptions() {
+  if (!elements.playerName) return;
+  const remaining = remainingRosterOptions();
+  elements.playerName.innerHTML = '';
+  if (!remaining.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'All fixed players added';
+    elements.playerName.appendChild(opt);
+    elements.playerName.disabled = true;
+    elements.addPlayer.disabled = true;
+    elements.duplicateWarning.textContent = 'All four players are ready.';
+    return;
+  }
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Select a player';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  elements.playerName.appendChild(placeholder);
+  remaining.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    elements.playerName.appendChild(opt);
+  });
+  elements.playerName.disabled = false;
+  elements.addPlayer.disabled = false;
+  elements.duplicateWarning.textContent = '';
+}
+
 function renderPlayers() {
   const template = document.getElementById('playerTableTemplate');
   const clone = template.content.cloneNode(true);
   const tbody = clone.querySelector('tbody');
   const statsMap = calculateAllStats();
+  updatePlayerNameOptions();
 
   if (!state.players.length) {
     const empty = document.createElement('p');
@@ -458,7 +545,8 @@ function defaultStats() {
 function validateImportedData(data) {
   if (!data || typeof data !== 'object') return 'Invalid backup format.';
   if (!Array.isArray(data.players) || !Array.isArray(data.matches)) return 'Backup must include players and matches arrays.';
-  if (data.players.length > 20) return 'Backup contains more than 20 players.';
+  data.players = data.players.filter(p => isAllowedPlayerName(p.name)).slice(0, MAX_PLAYERS);
+  if (data.players.length > MAX_PLAYERS) return 'Backup contains more players than the fixed roster allows.';
   const ids = new Set();
   for (const player of data.players) {
     if (!player.id || ids.has(player.id)) return 'Player IDs must be unique.';
@@ -476,6 +564,7 @@ function applyImportedData(data, options = {}) {
   state.matches = data.matches || [];
   state.selectedPlayerId = null;
   state.filters = { playerId: 'all', from: '', to: '' };
+  seedFixedRoster();
   persistState({ skipSync: options.skipSync, reason: options.reason });
   render();
 }
@@ -930,6 +1019,7 @@ function clearAllData() {
   state.players = [];
   state.matches = [];
   state.selectedPlayerId = null;
+  seedFixedRoster();
   persistState();
   render();
 }
@@ -974,7 +1064,7 @@ function attachEvents() {
     const name = elements.playerName.value.trim();
     const nickname = elements.playerNickname.value.trim();
     if (!name) return;
-    if (state.players.filter(p => p.active !== false).length >= 20) return;
+    if (state.players.filter(p => p.active !== false && isAllowedPlayerName(p.name)).length >= MAX_PLAYERS) return;
     addPlayer(name, nickname);
   });
 
@@ -1044,6 +1134,9 @@ function render() {
 document.addEventListener('DOMContentLoaded', () => {
   initElements();
   loadState();
+  if (seedFixedRoster()) {
+    persistState({ skipSync: true, reason: 'Seed fixed roster' });
+  }
   loadAuth();
   loadSupabaseConfig();
   ensureDefaultClientId();
