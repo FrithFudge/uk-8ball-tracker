@@ -85,19 +85,6 @@
         </div>
       </section>
 
-      <section class="panel" aria-labelledby="player-management-heading">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Roster</p>
-          <h2 id="player-management-heading">Player Management</h2>
-        </div>
-        <p class="muted" id="playerCount">0 / 4 fixed players</p>
-      </div>
-      <p class="muted small">Roster is fixed to Connor, Dave, AJ and Trav. All four are preloaded and ready for match entry.</p>
-
-      <div id="playerList" class="table-wrapper"></div>
-    </section>
-
     <section class="panel" aria-labelledby="new-match-heading">
       <div class="panel-header">
         <div>
@@ -184,29 +171,17 @@
           <p class="eyebrow">Insights</p>
           <h2 id="stats-heading">Player Stats</h2>
         </div>
-        <p class="muted small">Select a player from the roster to view details.</p>
+        <div class="filters">
+          <label class="input-set">Select player
+            <select id="statsSelect"></select>
+          </label>
+        </div>
       </div>
       <div id="statsPanel" class="stats-panel">No player selected.</div>
     </section>
   </main>
 
 </div>
-
-  <template id="playerTableTemplate">
-    <table>
-      <thead>
-        <tr>
-          <th>Player</th>
-          <th>Matches</th>
-          <th>Wins</th>
-          <th>Losses</th>
-          <th>Win %</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </template>
 
   <template id="matchHistoryTemplate">
     <table>

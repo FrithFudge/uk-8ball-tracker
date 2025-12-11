@@ -127,11 +127,6 @@ function seedFixedRoster() {
   return added;
 }
 
-function remainingRosterOptions() {
-  const existingNames = new Set(state.players.map(p => p.name.toLowerCase()));
-  return FIXED_ROSTER.filter(p => !existingNames.has(p.name.toLowerCase()));
-}
-
 function persistState(options = {}) {
   if (!options.skipTimestamp) {
     state.updatedAt = Date.now();
@@ -177,14 +172,6 @@ function initElements() {
   elements.cloudStatus = $('#cloudStatus');
   elements.connectCloud = $('#connectCloud');
 
-  elements.playerForm = $('#playerForm');
-  elements.playerName = $('#playerName');
-  elements.playerNickname = $('#playerNickname');
-  elements.addPlayer = $('#addPlayer');
-  elements.playerCount = $('#playerCount');
-  elements.duplicateWarning = $('#duplicateWarning');
-  elements.playerList = $('#playerList');
-
   elements.syncStatus = $('#syncStatus');
 
   elements.matchForm = $('#matchForm');
@@ -205,62 +192,14 @@ function initElements() {
   elements.matchHistory = $('#matchHistory');
 
   elements.statsPanel = $('#statsPanel');
+  elements.statsSelect = $('#statsSelect');
 
   elements.clearMatches = $('#clearMatches');
   elements.resetData = $('#resetData');
 }
 
-function updatePlayerCount() {
-  const activeAllowed = state.players.filter(p => p.active !== false && isAllowedPlayerName(p.name)).length;
-  if (elements.playerCount) {
-    elements.playerCount.textContent = `${activeAllowed} / ${MAX_PLAYERS} fixed players`;
-  }
-}
-
-function addPlayer(name, nickname) {
-  if (!isAllowedPlayerName(name)) {
-    if (elements.duplicateWarning) {
-      elements.duplicateWarning.textContent = 'Roster is locked to Connor, Dave, AJ and Trav.';
-    }
-    return false;
-  }
-  const exists = state.players.some(p => p.name.toLowerCase() === name.toLowerCase());
-  if (exists) {
-    if (elements.duplicateWarning) {
-      elements.duplicateWarning.textContent = 'That player name already exists.';
-    }
-    return false;
-  }
-  const player = { id: uid(), name: name.trim(), nickname: nickname.trim(), active: true, createdAt: new Date().toISOString() };
-  state.players.push(player);
-  persistState({ reason: 'Add player' });
-  render();
-  if (elements.playerForm) elements.playerForm.reset();
-  if (elements.duplicateWarning) elements.duplicateWarning.textContent = '';
-  updatePlayerNameOptions();
-  return true;
-}
-
-function deletePlayer(id) {
-  const playerMatches = state.matches.some(m => m.playerAId === id || m.playerBId === id);
-  const player = state.players.find(p => p.id === id);
-  if (!player) return;
-
-  if (playerMatches) {
-    if (!confirm('This player has recorded matches. Archive the player (keeps past results but hides from selection)?')) return;
-    player.active = false;
-    player.archivedAt = new Date().toISOString();
-  } else {
-    if (!confirm('Delete player permanently?')) return;
-    state.players = state.players.filter(p => p.id !== id);
-  }
-
-  if (state.selectedPlayerId === id) state.selectedPlayerId = null;
-  persistState({ reason: 'Delete/archive player' });
-  render();
-}
-
 function buildPlayerOptions(selectEl, includeAll = false) {
+  if (!selectEl) return;
   selectEl.innerHTML = '';
   if (includeAll) {
     const opt = document.createElement('option');
@@ -276,134 +215,6 @@ function buildPlayerOptions(selectEl, includeAll = false) {
     selectEl.appendChild(opt);
   });
 }
-
-function updatePlayerNameOptions() {
-  if (!elements.playerName) return;
-  const remaining = remainingRosterOptions();
-  elements.playerName.innerHTML = '';
-  if (!remaining.length) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = 'All fixed players added';
-    elements.playerName.appendChild(opt);
-    elements.playerName.disabled = true;
-    elements.addPlayer.disabled = true;
-    elements.duplicateWarning.textContent = 'All four players are ready.';
-    return;
-  }
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = 'Select a player';
-  placeholder.disabled = true;
-  placeholder.selected = true;
-  elements.playerName.appendChild(placeholder);
-  remaining.forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p.name;
-    opt.textContent = p.name;
-    elements.playerName.appendChild(opt);
-  });
-  elements.playerName.disabled = false;
-  elements.addPlayer.disabled = false;
-  elements.duplicateWarning.textContent = '';
-}
-
-function renderPlayers() {
-  const template = document.getElementById('playerTableTemplate');
-  const clone = template.content.cloneNode(true);
-  const tbody = clone.querySelector('tbody');
-  const statsMap = calculateAllStats();
-  updatePlayerNameOptions();
-
-  if (!state.players.length) {
-    const empty = document.createElement('p');
-    empty.className = 'muted';
-    empty.textContent = 'No players added yet.';
-    elements.playerList.innerHTML = '';
-    elements.playerList.appendChild(empty);
-    updatePlayerCount();
-    buildPlayerOptions(elements.playerA);
-    buildPlayerOptions(elements.playerB);
-    buildPlayerOptions(elements.filterPlayer, true);
-    return;
-  }
-
-  const sortedPlayers = [...state.players].sort((a, b) => a.name.localeCompare(b.name));
-  sortedPlayers.forEach(player => {
-    const row = document.createElement('tr');
-    const stats = statsMap[player.id] || defaultStats();
-    const nameCell = document.createElement('td');
-    const chip = document.createElement('div');
-    chip.className = 'player-chip';
-    chip.textContent = player.name + (player.nickname ? ` (${player.nickname})` : '');
-    if (player.active === false) {
-      const badge = document.createElement('span');
-      badge.className = 'badge note';
-      badge.textContent = 'Archived';
-      chip.appendChild(badge);
-    }
-    nameCell.appendChild(chip);
-    nameCell.title = 'View stats';
-    nameCell.style.cursor = 'pointer';
-    nameCell.addEventListener('click', () => {
-      state.selectedPlayerId = player.id;
-      persistState();
-      renderStats();
-    });
-
-    const matchesCell = document.createElement('td');
-    matchesCell.textContent = stats.matches;
-
-    const winsCell = document.createElement('td');
-    winsCell.innerHTML = `<span class="badge win">${stats.wins}</span>`;
-
-    const lossesCell = document.createElement('td');
-    lossesCell.innerHTML = `<span class="badge loss">${stats.losses}</span>`;
-
-    const winPctCell = document.createElement('td');
-    winPctCell.textContent = stats.matches ? `${stats.winPct}%` : '—';
-
-    const actionCell = document.createElement('td');
-    actionCell.style.textAlign = 'right';
-    const viewBtn = document.createElement('button');
-    viewBtn.className = 'ghost';
-    viewBtn.textContent = 'View stats';
-    viewBtn.addEventListener('click', () => {
-      state.selectedPlayerId = player.id;
-      persistState();
-      renderStats();
-    });
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'danger ghost';
-    deleteBtn.textContent = player.active === false ? 'Remove' : 'Delete';
-    deleteBtn.addEventListener('click', () => deletePlayer(player.id));
-
-    const actionWrap = document.createElement('div');
-    actionWrap.style.display = 'flex';
-    actionWrap.style.gap = '8px';
-    actionWrap.appendChild(viewBtn);
-    actionWrap.appendChild(deleteBtn);
-    actionCell.appendChild(actionWrap);
-
-    row.appendChild(nameCell);
-    row.appendChild(matchesCell);
-    row.appendChild(winsCell);
-    row.appendChild(lossesCell);
-    row.appendChild(winPctCell);
-    row.appendChild(actionCell);
-    tbody.appendChild(row);
-  });
-
-  elements.playerList.innerHTML = '';
-  elements.playerList.appendChild(clone);
-  updatePlayerCount();
-  buildPlayerOptions(elements.playerA);
-  buildPlayerOptions(elements.playerB);
-  buildPlayerOptions(elements.filterPlayer, true);
-  elements.filterPlayer.value = state.filters.playerId || 'all';
-}
-
 function defaultStats() {
   return {
     matches: 0,
@@ -941,17 +752,6 @@ function clearAllData() {
 }
 
 function attachEvents() {
-  if (elements.playerForm) {
-    elements.playerForm.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const name = elements.playerName.value.trim();
-      const nickname = elements.playerNickname.value.trim();
-      if (!name) return;
-      if (state.players.filter(p => p.active !== false && isAllowedPlayerName(p.name)).length >= MAX_PLAYERS) return;
-      addPlayer(name, nickname);
-    });
-  }
-
   elements.matchForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const formData = new FormData(elements.matchForm);
@@ -1002,10 +802,28 @@ function attachEvents() {
   elements.loginForm.addEventListener('submit', handleLoginSubmit);
 
   elements.connectCloud.addEventListener('click', connectCloud);
+
+  elements.statsSelect.addEventListener('change', () => {
+    state.selectedPlayerId = elements.statsSelect.value;
+    persistState();
+    renderStats();
+  });
 }
 
 function render() {
-  renderPlayers();
+  buildPlayerOptions(elements.playerA);
+  buildPlayerOptions(elements.playerB);
+  buildPlayerOptions(elements.filterPlayer, true);
+  buildPlayerOptions(elements.statsSelect);
+  if (!state.selectedPlayerId && state.players.length) {
+    state.selectedPlayerId = state.players[0].id;
+  }
+  if (elements.statsSelect && state.selectedPlayerId) {
+    elements.statsSelect.value = state.selectedPlayerId;
+  }
+  if (elements.filterPlayer) {
+    elements.filterPlayer.value = state.filters.playerId || 'all';
+  }
   renderMatches();
   renderStats();
   updateMatchFormAvailability();
