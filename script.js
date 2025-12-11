@@ -2,6 +2,16 @@ const STORAGE_KEY = 'uk8ball-tracker';
 const AUTH_KEY = 'uk8ball-auth';
 const CLOUD_KEY = 'uk8ball-cloud';
 const CLOUD_PUSH_INTERVAL = 60 * 1000;
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyD0HXOpf-CCb-YxdY7D8SiJD5cnOhrATO4',
+  authDomain: 'ball-pool-87fcf.firebaseapp.com',
+  projectId: 'ball-pool-87fcf',
+  storageBucket: 'ball-pool-87fcf.firebasestorage.app',
+  messagingSenderId: '544591997924',
+  appId: '1:544591997924:web:2e9077821fe4e9aeb275f1',
+  measurementId: 'G-PWSTV1XGRT'
+};
+const DEFAULT_LEAGUE_KEY = 'main-league';
 const TEAM_ACCOUNTS = [
   { id: 'connor', name: 'Connor', passcode: 'connor123' },
   { id: 'dave', name: 'Dave', passcode: 'dave123' },
@@ -34,7 +44,7 @@ const authState = {
 };
 
 const cloudState = {
-  config: { firebaseConfig: null, leagueKey: '' },
+  config: { firebaseConfig: DEFAULT_FIREBASE_CONFIG, leagueKey: DEFAULT_LEAGUE_KEY },
   connected: false,
   lastRemoteHash: '',
   lastPushedHash: '',
@@ -88,6 +98,21 @@ function loadCloudConfig() {
     cloudState.config = parsed.config || cloudState.config;
   } catch (err) {
     console.error('Failed to parse cloud config', err);
+  }
+}
+
+function ensureDefaultCloudConfig() {
+  let updated = false;
+  if (!cloudState.config.firebaseConfig) {
+    cloudState.config.firebaseConfig = DEFAULT_FIREBASE_CONFIG;
+    updated = true;
+  }
+  if (!cloudState.config.leagueKey) {
+    cloudState.config.leagueKey = DEFAULT_LEAGUE_KEY;
+    updated = true;
+  }
+  if (updated) {
+    persistCloudConfig();
   }
 }
 
@@ -839,6 +864,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   loadAuth();
   loadCloudConfig();
+  ensureDefaultCloudConfig();
   setAuthVisibility();
   populateLoginChoices();
   applyCloudConfigToUi();
