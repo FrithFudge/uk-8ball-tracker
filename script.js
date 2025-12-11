@@ -1,17 +1,5 @@
 const STORAGE_KEY = 'uk8ball-tracker';
 const AUTH_KEY = 'uk8ball-auth';
-const CLOUD_KEY = 'uk8ball-cloud';
-const CLOUD_PUSH_INTERVAL = 60 * 1000;
-const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyD0HXOpf-CCb-YxdY7D8SiJD5cnOhrATO4',
-  authDomain: 'ball-pool-87fcf.firebaseapp.com',
-  projectId: 'ball-pool-87fcf',
-  storageBucket: 'ball-pool-87fcf.firebasestorage.app',
-  messagingSenderId: '544591997924',
-  appId: '1:544591997924:web:2e9077821fe4e9aeb275f1',
-  measurementId: 'G-PWSTV1XGRT'
-};
-const DEFAULT_LEAGUE_KEY = 'main-league';
 const TEAM_ACCOUNTS = [
   { id: 'connor', name: 'Connor', passcode: 'connor123' },
   { id: 'dave', name: 'Dave', passcode: 'dave123' },
@@ -41,20 +29,6 @@ const state = {
 const authState = {
   user: null,
   isLoggedIn: false
-};
-
-const cloudState = {
-  config: { firebaseConfig: DEFAULT_FIREBASE_CONFIG, leagueKey: DEFAULT_LEAGUE_KEY },
-  connected: false,
-  lastRemoteHash: '',
-  lastPushedHash: '',
-  pushTimer: null,
-  intervalId: null,
-  applyingRemote: false,
-  firebaseApp: null,
-  firebaseDb: null,
-  firebaseAuth: null,
-  configHash: ''
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -88,36 +62,6 @@ function loadAuth() {
   } catch (err) {
     console.error('Failed to parse auth state', err);
   }
-}
-
-function loadCloudConfig() {
-  const raw = localStorage.getItem(CLOUD_KEY);
-  if (!raw) return;
-  try {
-    const parsed = JSON.parse(raw);
-    cloudState.config = parsed.config || cloudState.config;
-  } catch (err) {
-    console.error('Failed to parse cloud config', err);
-  }
-}
-
-function ensureDefaultCloudConfig() {
-  let updated = false;
-  if (!cloudState.config.firebaseConfig) {
-    cloudState.config.firebaseConfig = DEFAULT_FIREBASE_CONFIG;
-    updated = true;
-  }
-  if (!cloudState.config.leagueKey) {
-    cloudState.config.leagueKey = DEFAULT_LEAGUE_KEY;
-    updated = true;
-  }
-  if (updated) {
-    persistCloudConfig();
-  }
-}
-
-function persistCloudConfig() {
-  localStorage.setItem(CLOUD_KEY, JSON.stringify({ config: cloudState.config }));
 }
 
 function isAllowedPlayerName(name) {
@@ -163,9 +107,6 @@ function persistState(options = {}) {
     filters: state.filters,
     updatedAt: state.updatedAt
   }));
-  if (!options.skipSync) {
-    scheduleCloudPush(options.reason || 'local save');
-  }
 }
 
 function persistAuth() {
@@ -191,11 +132,6 @@ function initElements() {
   elements.userName = $('#userName');
   elements.userEmail = $('#userEmail');
   elements.logoutBtn = $('#logoutBtn');
-
-  elements.firebaseConfig = $('#firebaseConfig');
-  elements.leagueKey = $('#leagueKey');
-  elements.cloudStatus = $('#cloudStatus');
-  elements.connectCloud = $('#connectCloud');
 
   elements.syncStatus = $('#syncStatus');
 
@@ -270,13 +206,13 @@ function validateImportedData(data) {
   return '';
 }
 
-function applyImportedData(data, options = {}) {
+function applyImportedData(data) {
   state.players = data.players || [];
   state.matches = data.matches || [];
   state.selectedPlayerId = null;
   state.filters = { playerId: 'all', from: '', to: '' };
   seedFixedRoster();
-  persistState({ skipSync: options.skipSync, reason: options.reason });
+  persistState();
   render();
 }
 
@@ -284,153 +220,6 @@ function setSyncStatus(message, isError = false) {
   if (!elements.syncStatus) return;
   elements.syncStatus.textContent = message;
   elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
-}
-
-function setCloudBadge(text, tone = 'note') {
-  if (!elements.cloudStatus) return;
-  elements.cloudStatus.textContent = text;
-  elements.cloudStatus.className = `badge ${tone}`;
-}
-
-function applyCloudConfigToUi() {
-  if (elements.firebaseConfig && cloudState.config.firebaseConfig) {
-    elements.firebaseConfig.value = JSON.stringify(cloudState.config.firebaseConfig, null, 2);
-  }
-  if (elements.leagueKey) {
-    elements.leagueKey.value = cloudState.config.leagueKey || '';
-  }
-}
-
-function hashPayload(payload) {
-  try {
-    return btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-  } catch (err) {
-    console.error('Hash failed', err);
-    return String(Date.now());
-  }
-}
-
-function getCloudRef() {
-  if (!cloudState.firebaseDb || !cloudState.config.leagueKey) return null;
-  return cloudState.firebaseDb.ref(`leagues/${cloudState.config.leagueKey}`);
-}
-
-function scheduleCloudPush(reason = 'local change') {
-  if (!cloudState.connected) return;
-  if (cloudState.pushTimer) clearTimeout(cloudState.pushTimer);
-  cloudState.pushTimer = setTimeout(() => {
-    pushCloud(reason);
-  }, 600);
-}
-
-async function pushCloud(reason = 'manual') {
-  if (!cloudState.connected || cloudState.applyingRemote) return;
-  const ref = getCloudRef();
-  if (!ref) return;
-  const payload = {
-    players: state.players,
-    matches: state.matches,
-    selectedPlayerId: state.selectedPlayerId,
-    filters: state.filters,
-    updatedAt: state.updatedAt
-  };
-  const nextHash = hashPayload(payload);
-  if (nextHash === cloudState.lastPushedHash) return;
-  try {
-    await ref.set(payload);
-    cloudState.lastPushedHash = nextHash;
-    setCloudBadge('Synced', 'win');
-    setSyncStatus(`Live: pushed (${reason})`);
-  } catch (err) {
-    console.error('Cloud push failed', err);
-    setCloudBadge('Sync error', 'loss');
-    setSyncStatus('Cloud push failed. Check config.', true);
-  }
-}
-
-function handleCloudSnapshot(snapshot) {
-  const data = snapshot.val();
-  if (!data) return;
-  const incoming = {
-    players: data.players || [],
-    matches: data.matches || [],
-    selectedPlayerId: data.selectedPlayerId || null,
-    filters: data.filters || { playerId: 'all', from: '', to: '' },
-    updatedAt: data.updatedAt || 0
-  };
-  const maybeError = validateImportedData(incoming);
-  if (maybeError) {
-    setSyncStatus(maybeError, true);
-    setCloudBadge('Invalid data', 'loss');
-    return;
-  }
-  const remoteHash = hashPayload(incoming);
-  cloudState.lastRemoteHash = remoteHash;
-  if (remoteHash === cloudState.lastPushedHash) return;
-  if (incoming.updatedAt <= state.updatedAt) {
-    return;
-  }
-  cloudState.applyingRemote = true;
-  applyImportedData(incoming, { skipSync: true, reason: 'Cloud load' });
-  cloudState.applyingRemote = false;
-  setSyncStatus('Live: pulled latest data');
-  setCloudBadge('Live', 'win');
-}
-
-function attachCloudListener() {
-  const ref = getCloudRef();
-  if (!ref) return;
-  ref.off();
-  ref.on('value', handleCloudSnapshot);
-}
-
-async function initFirebase(config) {
-  if (!window.firebase) throw new Error('Firebase SDK not loaded');
-  const configHash = hashPayload(config);
-  const existing = firebase.apps.find(app => app.name === 'cloud-sync');
-  if (existing && cloudState.configHash !== configHash && existing.delete) {
-    try { await existing.delete(); } catch (e) { console.warn('Could not delete previous Firebase app', e); }
-  }
-  const app = firebase.apps.find(app => app.name === 'cloud-sync') || firebase.initializeApp(config, 'cloud-sync');
-  cloudState.firebaseApp = app;
-  cloudState.firebaseDb = app.database();
-  cloudState.firebaseAuth = app.auth();
-  cloudState.configHash = configHash;
-  await cloudState.firebaseAuth.signInAnonymously();
-}
-
-async function connectCloud() {
-  let configObj = null;
-  try {
-    configObj = JSON.parse(elements.firebaseConfig.value || '{}');
-  } catch (err) {
-    setSyncStatus('Firebase config must be valid JSON.', true);
-    setCloudBadge('Config error', 'loss');
-    return;
-  }
-  const leagueKey = elements.leagueKey.value.trim();
-  if (!leagueKey) {
-    setSyncStatus('Enter a league key to sync.', true);
-    setCloudBadge('Missing key', 'loss');
-    return;
-  }
-  cloudState.config = { firebaseConfig: configObj, leagueKey };
-  persistCloudConfig();
-  try {
-    await initFirebase(configObj);
-    cloudState.connected = true;
-    setCloudBadge('Connected', 'win');
-    setSyncStatus('Live sync ready. Listening for changes.');
-    attachCloudListener();
-    scheduleCloudPush('connect');
-    if (cloudState.intervalId) clearInterval(cloudState.intervalId);
-    cloudState.intervalId = setInterval(() => pushCloud('scheduled'), CLOUD_PUSH_INTERVAL);
-  } catch (err) {
-    console.error('Firebase connect failed', err);
-    setSyncStatus('Could not connect to Firebase. Check config and database rules.', true);
-    setCloudBadge('Offline', 'note');
-    cloudState.connected = false;
-  }
 }
 
 function setAuthVisibility() {
@@ -599,7 +388,7 @@ function saveMatch(data) {
   elements.matchForm.reset();
   elements.matchMessage.textContent = 'Match saved!';
   elements.matchMessage.style.color = 'var(--primary)';
-  persistState({ reason: 'Record match' });
+  persistState();
   render();
 }
 
@@ -818,15 +607,13 @@ function attachEvents() {
     if (!state.matches.length) return;
     if (!confirm('Clear all recorded matches?')) return;
     state.matches = [];
-    persistState({ reason: 'Clear matches' });
+    persistState();
     render();
   });
 
   elements.resetData.addEventListener('click', clearAllData);
   elements.logoutBtn.addEventListener('click', handleLogout);
   elements.loginForm.addEventListener('submit', handleLoginSubmit);
-
-  elements.connectCloud.addEventListener('click', connectCloud);
 
   elements.statsSelect.addEventListener('change', () => {
     state.selectedPlayerId = elements.statsSelect.value;
@@ -860,18 +647,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initElements();
   loadState();
   if (seedFixedRoster()) {
-    persistState({ skipSync: true, reason: 'Seed fixed roster' });
+    persistState({ skipTimestamp: true });
   }
   loadAuth();
-  loadCloudConfig();
-  ensureDefaultCloudConfig();
   setAuthVisibility();
   populateLoginChoices();
-  applyCloudConfigToUi();
   attachEvents();
   render();
-  setSyncStatus('Data is saved locally; connect cloud for realtime.');
-  if (cloudState.config.firebaseConfig && cloudState.config.leagueKey) {
-    connectCloud();
-  }
+  setSyncStatus('Data is saved locally on this device.');
 });
