@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>UK 8-Ball Pool League Tracker</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
   <div id="authOverlay" class="auth-overlay">
@@ -53,33 +52,6 @@
         </div>
       </div>
     </header>
-
-    <section class="panel compact" aria-labelledby="supabase-heading">
-      <div class="panel-header tight">
-        <div>
-          <p class="eyebrow">Persistent backend</p>
-          <h2 id="supabase-heading">Supabase sync</h2>
-        </div>
-        <p id="supabaseStatus" class="muted small">Not configured</p>
-      </div>
-      <div class="form-grid three">
-        <label class="input-set">Supabase URL
-          <input id="supabaseUrl" type="url" placeholder="https://your-project.supabase.co">
-        </label>
-        <label class="input-set">Anon/service key
-          <input id="supabaseKey" type="text" placeholder="Supabase anon key">
-        </label>
-        <label class="input-set">League ID (optional)
-          <input id="supabaseLeague" type="text" placeholder="default">
-        </label>
-      </div>
-      <div class="pill-row">
-        <button id="saveSupabase" type="button">Save backend</button>
-        <button id="testSupabase" type="button" class="ghost">Test connection</button>
-        <button id="clearSupabase" type="button" class="ghost">Clear</button>
-      </div>
-      <p class="muted small">Backend sync runs automatically every minute after login. Provide your Supabase project URL and key; the provided key will stay on this device only.</p>
-    </section>
 
     <main class="layout">
     <section class="panel" aria-labelledby="player-management-heading">
