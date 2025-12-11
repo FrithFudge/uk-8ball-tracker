@@ -75,6 +75,14 @@
           </label>
         </div>
         <p class="muted small">We sign in anonymously to your project and sync every minute and after local changes. Ensure your database rules allow anonymous read/write for this league key.</p>
+        <div class="callout">
+          <p class="callout-title">Free options for realtime sync</p>
+          <ul>
+            <li><strong>Firebase Realtime Database (Spark plan)</strong> — free tier with generous limits. Create a project, choose Realtime Database &amp; anonymous access for the chosen league key, then paste the config JSON above.</li>
+            <li><strong>Local-only</strong> — leave Firebase blank to stay device-only; this costs nothing but doesn&rsquo;t sync across devices.</li>
+            <li><strong>Self-hosted</strong> — you can point the config at your own Firebase-compatible emulator or backend if you prefer running it yourself.</li>
+          </ul>
+        </div>
       </section>
 
       <section class="panel" aria-labelledby="player-management-heading">
