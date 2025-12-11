@@ -54,7 +54,30 @@
     </header>
 
     <main class="layout">
-    <section class="panel" aria-labelledby="player-management-heading">
+      <section class="panel" aria-labelledby="live-sync-heading">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Live sync</p>
+            <h2 id="live-sync-heading">Realtime persistence</h2>
+            <p class="muted small">Optional: connect to Firebase Realtime Database to keep the league in sync across devices. Config is stored locally only.</p>
+          </div>
+          <div class="cloud-actions">
+            <span id="cloudStatus" class="badge note">Offline</span>
+            <button id="connectCloud">Connect</button>
+          </div>
+        </div>
+        <div class="form-grid two">
+          <label class="input-set">Firebase config JSON
+            <textarea id="firebaseConfig" rows="3" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"https://<project>.firebaseio.com","projectId":"...","appId":"..."}'></textarea>
+          </label>
+          <label class="input-set">League key
+            <input id="leagueKey" type="text" placeholder="e.g. club-night-1">
+          </label>
+        </div>
+        <p class="muted small">We sign in anonymously to your project and sync every minute and after local changes. Ensure your database rules allow anonymous read/write for this league key.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="player-management-heading">
       <div class="panel-header">
         <div>
           <p class="eyebrow">Roster</p>
@@ -205,6 +228,9 @@
     </table>
   </template>
 
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

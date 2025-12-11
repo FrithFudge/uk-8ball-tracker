@@ -1,5 +1,7 @@
 const STORAGE_KEY = 'uk8ball-tracker';
 const AUTH_KEY = 'uk8ball-auth';
+const CLOUD_KEY = 'uk8ball-cloud';
+const CLOUD_PUSH_INTERVAL = 60 * 1000;
 const TEAM_ACCOUNTS = [
   { id: 'connor', name: 'Connor', passcode: 'connor123' },
   { id: 'dave', name: 'Dave', passcode: 'dave123' },
@@ -29,6 +31,20 @@ const state = {
 const authState = {
   user: null,
   isLoggedIn: false
+};
+
+const cloudState = {
+  config: { firebaseConfig: null, leagueKey: '' },
+  connected: false,
+  lastRemoteHash: '',
+  lastPushedHash: '',
+  pushTimer: null,
+  intervalId: null,
+  applyingRemote: false,
+  firebaseApp: null,
+  firebaseDb: null,
+  firebaseAuth: null,
+  configHash: ''
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -62,6 +78,21 @@ function loadAuth() {
   } catch (err) {
     console.error('Failed to parse auth state', err);
   }
+}
+
+function loadCloudConfig() {
+  const raw = localStorage.getItem(CLOUD_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    cloudState.config = parsed.config || cloudState.config;
+  } catch (err) {
+    console.error('Failed to parse cloud config', err);
+  }
+}
+
+function persistCloudConfig() {
+  localStorage.setItem(CLOUD_KEY, JSON.stringify({ config: cloudState.config }));
 }
 
 function isAllowedPlayerName(name) {
@@ -112,6 +143,9 @@ function persistState(options = {}) {
     filters: state.filters,
     updatedAt: state.updatedAt
   }));
+  if (!options.skipSync) {
+    scheduleCloudPush(options.reason || 'local save');
+  }
 }
 
 function persistAuth() {
@@ -137,6 +171,11 @@ function initElements() {
   elements.userName = $('#userName');
   elements.userEmail = $('#userEmail');
   elements.logoutBtn = $('#logoutBtn');
+
+  elements.firebaseConfig = $('#firebaseConfig');
+  elements.leagueKey = $('#leagueKey');
+  elements.cloudStatus = $('#cloudStatus');
+  elements.connectCloud = $('#connectCloud');
 
   elements.playerForm = $('#playerForm');
   elements.playerName = $('#playerName');
@@ -408,6 +447,153 @@ function setSyncStatus(message, isError = false) {
   if (!elements.syncStatus) return;
   elements.syncStatus.textContent = message;
   elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
+}
+
+function setCloudBadge(text, tone = 'note') {
+  if (!elements.cloudStatus) return;
+  elements.cloudStatus.textContent = text;
+  elements.cloudStatus.className = `badge ${tone}`;
+}
+
+function applyCloudConfigToUi() {
+  if (elements.firebaseConfig && cloudState.config.firebaseConfig) {
+    elements.firebaseConfig.value = JSON.stringify(cloudState.config.firebaseConfig, null, 2);
+  }
+  if (elements.leagueKey) {
+    elements.leagueKey.value = cloudState.config.leagueKey || '';
+  }
+}
+
+function hashPayload(payload) {
+  try {
+    return btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  } catch (err) {
+    console.error('Hash failed', err);
+    return String(Date.now());
+  }
+}
+
+function getCloudRef() {
+  if (!cloudState.firebaseDb || !cloudState.config.leagueKey) return null;
+  return cloudState.firebaseDb.ref(`leagues/${cloudState.config.leagueKey}`);
+}
+
+function scheduleCloudPush(reason = 'local change') {
+  if (!cloudState.connected) return;
+  if (cloudState.pushTimer) clearTimeout(cloudState.pushTimer);
+  cloudState.pushTimer = setTimeout(() => {
+    pushCloud(reason);
+  }, 600);
+}
+
+async function pushCloud(reason = 'manual') {
+  if (!cloudState.connected || cloudState.applyingRemote) return;
+  const ref = getCloudRef();
+  if (!ref) return;
+  const payload = {
+    players: state.players,
+    matches: state.matches,
+    selectedPlayerId: state.selectedPlayerId,
+    filters: state.filters,
+    updatedAt: state.updatedAt
+  };
+  const nextHash = hashPayload(payload);
+  if (nextHash === cloudState.lastPushedHash) return;
+  try {
+    await ref.set(payload);
+    cloudState.lastPushedHash = nextHash;
+    setCloudBadge('Synced', 'win');
+    setSyncStatus(`Live: pushed (${reason})`);
+  } catch (err) {
+    console.error('Cloud push failed', err);
+    setCloudBadge('Sync error', 'loss');
+    setSyncStatus('Cloud push failed. Check config.', true);
+  }
+}
+
+function handleCloudSnapshot(snapshot) {
+  const data = snapshot.val();
+  if (!data) return;
+  const incoming = {
+    players: data.players || [],
+    matches: data.matches || [],
+    selectedPlayerId: data.selectedPlayerId || null,
+    filters: data.filters || { playerId: 'all', from: '', to: '' },
+    updatedAt: data.updatedAt || 0
+  };
+  const maybeError = validateImportedData(incoming);
+  if (maybeError) {
+    setSyncStatus(maybeError, true);
+    setCloudBadge('Invalid data', 'loss');
+    return;
+  }
+  const remoteHash = hashPayload(incoming);
+  cloudState.lastRemoteHash = remoteHash;
+  if (remoteHash === cloudState.lastPushedHash) return;
+  if (incoming.updatedAt <= state.updatedAt) {
+    return;
+  }
+  cloudState.applyingRemote = true;
+  applyImportedData(incoming, { skipSync: true, reason: 'Cloud load' });
+  cloudState.applyingRemote = false;
+  setSyncStatus('Live: pulled latest data');
+  setCloudBadge('Live', 'win');
+}
+
+function attachCloudListener() {
+  const ref = getCloudRef();
+  if (!ref) return;
+  ref.off();
+  ref.on('value', handleCloudSnapshot);
+}
+
+async function initFirebase(config) {
+  if (!window.firebase) throw new Error('Firebase SDK not loaded');
+  const configHash = hashPayload(config);
+  const existing = firebase.apps.find(app => app.name === 'cloud-sync');
+  if (existing && cloudState.configHash !== configHash && existing.delete) {
+    try { await existing.delete(); } catch (e) { console.warn('Could not delete previous Firebase app', e); }
+  }
+  const app = firebase.apps.find(app => app.name === 'cloud-sync') || firebase.initializeApp(config, 'cloud-sync');
+  cloudState.firebaseApp = app;
+  cloudState.firebaseDb = app.database();
+  cloudState.firebaseAuth = app.auth();
+  cloudState.configHash = configHash;
+  await cloudState.firebaseAuth.signInAnonymously();
+}
+
+async function connectCloud() {
+  let configObj = null;
+  try {
+    configObj = JSON.parse(elements.firebaseConfig.value || '{}');
+  } catch (err) {
+    setSyncStatus('Firebase config must be valid JSON.', true);
+    setCloudBadge('Config error', 'loss');
+    return;
+  }
+  const leagueKey = elements.leagueKey.value.trim();
+  if (!leagueKey) {
+    setSyncStatus('Enter a league key to sync.', true);
+    setCloudBadge('Missing key', 'loss');
+    return;
+  }
+  cloudState.config = { firebaseConfig: configObj, leagueKey };
+  persistCloudConfig();
+  try {
+    await initFirebase(configObj);
+    cloudState.connected = true;
+    setCloudBadge('Connected', 'win');
+    setSyncStatus('Live sync ready. Listening for changes.');
+    attachCloudListener();
+    scheduleCloudPush('connect');
+    if (cloudState.intervalId) clearInterval(cloudState.intervalId);
+    cloudState.intervalId = setInterval(() => pushCloud('scheduled'), CLOUD_PUSH_INTERVAL);
+  } catch (err) {
+    console.error('Firebase connect failed', err);
+    setSyncStatus('Could not connect to Firebase. Check config and database rules.', true);
+    setCloudBadge('Offline', 'note');
+    cloudState.connected = false;
+  }
 }
 
 function setAuthVisibility() {
@@ -811,6 +997,8 @@ function attachEvents() {
   elements.resetData.addEventListener('click', clearAllData);
   elements.logoutBtn.addEventListener('click', handleLogout);
   elements.loginForm.addEventListener('submit', handleLoginSubmit);
+
+  elements.connectCloud.addEventListener('click', connectCloud);
 }
 
 function render() {
@@ -829,9 +1017,14 @@ document.addEventListener('DOMContentLoaded', () => {
     persistState({ skipSync: true, reason: 'Seed fixed roster' });
   }
   loadAuth();
+  loadCloudConfig();
   setAuthVisibility();
   populateLoginChoices();
+  applyCloudConfigToUi();
   attachEvents();
   render();
-  setSyncStatus('Data is saved locally in this browser.');
+  setSyncStatus('Data is saved locally; connect cloud for realtime.');
+  if (cloudState.config.firebaseConfig && cloudState.config.leagueKey) {
+    connectCloud();
+  }
 });
