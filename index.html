@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UK 8-Ball Pool League Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="authOverlay" class="auth-overlay">
+    <div class="auth-card">
+      <p class="eyebrow">Secure access</p>
+      <h1>Team login</h1>
+      <p class="muted">Use one of the four player accounts to unlock the tracker. Credentials are stored locally for convenience.</p>
+      <form id="loginForm" class="stacked">
+        <div class="form-grid">
+          <label class="input-set">Player
+            <select id="loginUser" required></select>
+          </label>
+          <label class="input-set">Passcode
+            <input id="loginPass" type="password" placeholder="Enter passcode" autocomplete="current-password" required>
+          </label>
+        </div>
+        <div class="form-actions">
+          <p id="authError" class="muted small"></p>
+          <button type="submit">Sign in</button>
+        </div>
+      </form>
+      <p class="muted small">Default passcodes can be updated in code if needed. Current accounts: Connor, Dave, AJ, Trav.</p>
+    </div>
+  </div>
+
+  <div id="appContent" class="hidden">
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">Scoreboard Companion</p>
+        <h1>UK 8-Ball Pool League Tracker</h1>
+        <p class="subtitle">Track players, matches and stats</p>
+      </div>
+      <div class="header-actions">
+        <div class="user-badge hidden" id="userBadge">
+          <div class="avatar" id="userAvatar">?</div>
+          <div>
+            <p id="userName" class="small"></p>
+            <p id="userEmail" class="muted small"></p>
+          </div>
+          <button id="logoutBtn" class="ghost">Sign out</button>
+        </div>
+        <div class="stack-right">
+          <p id="syncStatus" class="muted small">Local data only</p>
+          <button id="resetData" class="danger">Reset All Data</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+    <section class="panel" aria-labelledby="new-match-heading">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Match Entry</p>
+          <h2 id="new-match-heading">New Match</h2>
+        </div>
+        <p class="muted small">All fields required unless marked optional.</p>
+      </div>
+      <form id="matchForm" class="stacked">
+        <div class="form-grid two">
+          <label class="input-set">Player A
+            <select id="playerA" required></select>
+          </label>
+          <label class="input-set">Player B
+            <select id="playerB" required></select>
+          </label>
+        </div>
+        <div class="form-grid three">
+          <label class="input-set">Race to (frames)
+            <input id="raceTo" type="number" min="1" max="9" value="3" required>
+          </label>
+          <label class="input-set">Frames (A)
+            <input id="framesA" type="number" min="0" max="9" required>
+          </label>
+          <label class="input-set">Frames (B)
+            <input id="framesB" type="number" min="0" max="9" required>
+          </label>
+        </div>
+        <div class="form-grid two">
+          <label class="input-set">Outcome
+            <select id="outcome">
+              <option>Standard win</option>
+              <option>Black ball win</option>
+              <option>Loss on black</option>
+              <option>Foul win</option>
+              <option>Foul + 2 shots</option>
+            </select>
+          </label>
+          <label class="input-set">Additional note (optional)
+            <input id="note" type="text" placeholder="e.g. Hill-hill, tactical frame">
+          </label>
+        </div>
+        <fieldset class="break-toggle">
+          <legend>Who broke first?</legend>
+          <label><input type="radio" name="breaker" value="A"> Player A</label>
+          <label><input type="radio" name="breaker" value="B"> Player B</label>
+          <label><input type="radio" name="breaker" value=""> Not recorded</label>
+        </fieldset>
+        <div class="form-actions">
+          <p id="matchMessage" class="muted small"></p>
+          <button type="submit" id="saveMatch">Save Match</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="history-heading">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Timeline</p>
+          <h2 id="history-heading">Match History</h2>
+        </div>
+        <div class="filters">
+          <label class="input-set">Filter by player
+            <select id="filterPlayer"></select>
+          </label>
+          <label class="input-set">From
+            <input id="filterFrom" type="date">
+          </label>
+          <label class="input-set">To
+            <input id="filterTo" type="date">
+          </label>
+          <button id="clearFilters" class="ghost">Clear</button>
+        </div>
+      </div>
+      <div class="table-wrapper" id="matchHistory"></div>
+      <div class="panel-footer">
+        <button id="clearMatches" class="danger ghost">Clear All Matches</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="stats-heading">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Insights</p>
+          <h2 id="stats-heading">Player Stats</h2>
+        </div>
+        <div class="filters">
+          <label class="input-set">Select player
+            <select id="statsSelect"></select>
+          </label>
+        </div>
+      </div>
+      <div id="statsPanel" class="stats-panel">No player selected.</div>
+    </section>
+  </main>
+
+</div>
+
+  <template id="matchHistoryTemplate">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Fixture</th>
+          <th>Score</th>
+          <th>Outcome</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </template>
+
+  <script src="script.js"></script>
+</body>
+</html>

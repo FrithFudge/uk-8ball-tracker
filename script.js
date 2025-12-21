@@ -1,0 +1,658 @@
+const STORAGE_KEY = 'uk8ball-tracker';
+const AUTH_KEY = 'uk8ball-auth';
+const TEAM_ACCOUNTS = [
+  { id: 'connor', name: 'Connor', passcode: 'connor123' },
+  { id: 'dave', name: 'Dave', passcode: 'dave123' },
+  { id: 'aj', name: 'AJ', passcode: 'aj123' },
+  { id: 'trav', name: 'Trav', passcode: 'trav123' }
+];
+const FIXED_ROSTER = [
+  { name: 'Connor', nickname: '' },
+  { name: 'Dave', nickname: '' },
+  { name: 'AJ', nickname: '' },
+  { name: 'Trav', nickname: '' }
+];
+const MAX_PLAYERS = FIXED_ROSTER.length;
+
+const state = {
+  players: [],
+  matches: [],
+  selectedPlayerId: null,
+  updatedAt: Date.now(),
+  filters: {
+    playerId: 'all',
+    from: '',
+    to: ''
+  }
+};
+
+const authState = {
+  user: null,
+  isLoggedIn: false
+};
+
+const $ = (selector) => document.querySelector(selector);
+
+const elements = {};
+
+function loadState() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    state.players = parsed.players || [];
+    state.matches = parsed.matches || [];
+    state.selectedPlayerId = parsed.selectedPlayerId || null;
+    state.filters = parsed.filters || state.filters;
+    state.updatedAt = parsed.updatedAt || Date.now();
+  } catch (err) {
+    console.error('Failed to parse saved data', err);
+  }
+}
+
+function loadAuth() {
+  const raw = localStorage.getItem(AUTH_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    const savedUser = parsed.user;
+    const validAccount = TEAM_ACCOUNTS.find(acc => acc.id === savedUser?.id);
+    authState.user = validAccount ? { name: validAccount.name, id: validAccount.id } : null;
+    authState.isLoggedIn = !!authState.user;
+  } catch (err) {
+    console.error('Failed to parse auth state', err);
+  }
+}
+
+function isAllowedPlayerName(name) {
+  if (!name) return false;
+  return FIXED_ROSTER.some(p => p.name.toLowerCase() === name.toLowerCase());
+}
+
+function seedFixedRoster() {
+  let added = false;
+  const existingByName = new Map(state.players.map(p => [p.name.toLowerCase(), p]));
+
+  FIXED_ROSTER.forEach(({ name, nickname }) => {
+    const key = name.toLowerCase();
+    if (existingByName.has(key)) {
+      const existing = existingByName.get(key);
+      if (existing.active === false) {
+        existing.active = true;
+        delete existing.archivedAt;
+        added = true;
+      }
+      return;
+    }
+    state.players.push({
+      id: `fixed-${key}`,
+      name,
+      nickname: nickname || '',
+      active: true,
+      createdAt: new Date().toISOString()
+    });
+    added = true;
+  });
+  return added;
+}
+
+function persistState(options = {}) {
+  if (!options.skipTimestamp) {
+    state.updatedAt = Date.now();
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    players: state.players,
+    matches: state.matches,
+    selectedPlayerId: state.selectedPlayerId,
+    filters: state.filters,
+    updatedAt: state.updatedAt
+  }));
+}
+
+function persistAuth() {
+  localStorage.setItem(AUTH_KEY, JSON.stringify({
+    user: authState.user
+  }));
+}
+
+function uid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'id-' + Date.now().toString(16) + Math.random().toString(16).slice(2);
+}
+
+function initElements() {
+  elements.appContent = $('#appContent');
+  elements.authOverlay = $('#authOverlay');
+  elements.authError = $('#authError');
+  elements.loginForm = $('#loginForm');
+  elements.loginUser = $('#loginUser');
+  elements.loginPass = $('#loginPass');
+  elements.userBadge = $('#userBadge');
+  elements.userAvatar = $('#userAvatar');
+  elements.userName = $('#userName');
+  elements.userEmail = $('#userEmail');
+  elements.logoutBtn = $('#logoutBtn');
+
+  elements.syncStatus = $('#syncStatus');
+
+  elements.matchForm = $('#matchForm');
+  elements.playerA = $('#playerA');
+  elements.playerB = $('#playerB');
+  elements.raceTo = $('#raceTo');
+  elements.framesA = $('#framesA');
+  elements.framesB = $('#framesB');
+  elements.outcome = $('#outcome');
+  elements.note = $('#note');
+  elements.matchMessage = $('#matchMessage');
+  elements.saveMatch = $('#saveMatch');
+
+  elements.filterPlayer = $('#filterPlayer');
+  elements.filterFrom = $('#filterFrom');
+  elements.filterTo = $('#filterTo');
+  elements.clearFilters = $('#clearFilters');
+  elements.matchHistory = $('#matchHistory');
+
+  elements.statsPanel = $('#statsPanel');
+  elements.statsSelect = $('#statsSelect');
+
+  elements.clearMatches = $('#clearMatches');
+  elements.resetData = $('#resetData');
+}
+
+function buildPlayerOptions(selectEl, includeAll = false) {
+  if (!selectEl) return;
+  selectEl.innerHTML = '';
+  if (includeAll) {
+    const opt = document.createElement('option');
+    opt.value = 'all';
+    opt.textContent = 'All players';
+    selectEl.appendChild(opt);
+  }
+  const activePlayers = state.players.filter(p => p.active !== false);
+  activePlayers.forEach(player => {
+    const opt = document.createElement('option');
+    opt.value = player.id;
+    opt.textContent = player.nickname ? `${player.name} (${player.nickname})` : player.name;
+    selectEl.appendChild(opt);
+  });
+}
+function defaultStats() {
+  return {
+    matches: 0,
+    wins: 0,
+    losses: 0,
+    framesFor: 0,
+    framesAgainst: 0,
+    outcomeWins: {},
+    outcomeLosses: {},
+    headToHead: {}
+  };
+}
+
+function validateImportedData(data) {
+  if (!data || typeof data !== 'object') return 'Invalid backup format.';
+  if (!Array.isArray(data.players) || !Array.isArray(data.matches)) return 'Backup must include players and matches arrays.';
+  data.players = data.players.filter(p => isAllowedPlayerName(p.name)).slice(0, MAX_PLAYERS);
+  if (data.players.length > MAX_PLAYERS) return 'Backup contains more players than the fixed roster allows.';
+  const ids = new Set();
+  for (const player of data.players) {
+    if (!player.id || ids.has(player.id)) return 'Player IDs must be unique.';
+    ids.add(player.id);
+  }
+  const validMatches = data.matches.filter(m => ids.has(m.playerAId) && ids.has(m.playerBId));
+  if (validMatches.length !== data.matches.length) {
+    data.matches = validMatches;
+  }
+  return '';
+}
+
+function applyImportedData(data) {
+  state.players = data.players || [];
+  state.matches = data.matches || [];
+  state.selectedPlayerId = null;
+  state.filters = { playerId: 'all', from: '', to: '' };
+  seedFixedRoster();
+  persistState();
+  render();
+}
+
+function setSyncStatus(message, isError = false) {
+  if (!elements.syncStatus) return;
+  elements.syncStatus.textContent = message;
+  elements.syncStatus.style.color = isError ? 'var(--danger)' : 'var(--primary)';
+}
+
+function setAuthVisibility() {
+  if (authState.isLoggedIn) {
+    elements.appContent.classList.remove('hidden');
+    elements.authOverlay.classList.add('hidden');
+  } else {
+    elements.appContent.classList.add('hidden');
+    elements.authOverlay.classList.remove('hidden');
+  }
+  updateUserBadge();
+}
+
+function updateUserBadge() {
+  if (!elements.userBadge) return;
+  if (authState.isLoggedIn && authState.user) {
+    elements.userBadge.classList.remove('hidden');
+    elements.userName.textContent = authState.user.name || 'Signed in';
+    elements.userEmail.textContent = authState.user.email || '';
+    if (authState.user.picture) {
+      elements.userAvatar.style.backgroundImage = `url(${authState.user.picture})`;
+      elements.userAvatar.textContent = '';
+    } else {
+      elements.userAvatar.style.backgroundImage = '';
+      elements.userAvatar.textContent = (authState.user.name || '?').slice(0, 1).toUpperCase();
+    }
+  } else {
+    elements.userBadge.classList.add('hidden');
+    elements.userName.textContent = '';
+    elements.userEmail.textContent = '';
+    elements.userAvatar.textContent = '?';
+    elements.userAvatar.style.backgroundImage = '';
+  }
+}
+
+function setAuthError(message, isError = true) {
+  if (!elements.authError) return;
+  elements.authError.textContent = message;
+  elements.authError.classList.toggle('error', isError);
+}
+
+function populateLoginChoices() {
+  if (!elements.loginUser) return;
+  elements.loginUser.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Select your account';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  elements.loginUser.appendChild(placeholder);
+  TEAM_ACCOUNTS.forEach(account => {
+    const opt = document.createElement('option');
+    opt.value = account.id;
+    opt.textContent = account.name;
+    elements.loginUser.appendChild(opt);
+  });
+}
+
+function handleLoginSubmit(event) {
+  event.preventDefault();
+  const userId = elements.loginUser.value;
+  const pass = elements.loginPass.value.trim();
+  const account = TEAM_ACCOUNTS.find(acc => acc.id === userId);
+  if (!account) {
+    setAuthError('Choose a player account to continue.', true);
+    return;
+  }
+  if (pass !== account.passcode) {
+    setAuthError('Incorrect passcode. Please try again.', true);
+    return;
+  }
+  authState.user = { name: account.name, id: account.id };
+  authState.isLoggedIn = true;
+  persistAuth();
+  setAuthVisibility();
+  setSyncStatus('Signed in. Data stays on this device.');
+}
+
+function handleLogout() {
+  authState.user = null;
+  authState.isLoggedIn = false;
+  persistAuth();
+  setAuthVisibility();
+  setSyncStatus('Signed out.');
+}
+
+function calculateAllStats() {
+  const statsMap = {};
+  state.players.forEach(p => { statsMap[p.id] = defaultStats(); });
+
+  state.matches.forEach(match => {
+    const aStats = statsMap[match.playerAId] || defaultStats();
+    const bStats = statsMap[match.playerBId] || defaultStats();
+
+    aStats.matches += 1;
+    bStats.matches += 1;
+
+    aStats.framesFor += Number(match.framesA);
+    aStats.framesAgainst += Number(match.framesB);
+    bStats.framesFor += Number(match.framesB);
+    bStats.framesAgainst += Number(match.framesA);
+
+    const winnerStats = statsMap[match.winnerId];
+    const loserStats = match.winnerId === match.playerAId ? bStats : aStats;
+    winnerStats.wins += 1;
+    loserStats.losses += 1;
+
+    winnerStats.outcomeWins[match.outcome] = (winnerStats.outcomeWins[match.outcome] || 0) + 1;
+    loserStats.outcomeLosses[match.outcome] = (loserStats.outcomeLosses[match.outcome] || 0) + 1;
+
+    // Head to head
+    const opponentForA = statsMap[match.playerAId].headToHead;
+    const opponentForB = statsMap[match.playerBId].headToHead;
+    opponentForA[match.playerBId] = opponentForA[match.playerBId] || { wins: 0, losses: 0 };
+    opponentForB[match.playerAId] = opponentForB[match.playerAId] || { wins: 0, losses: 0 };
+    if (match.winnerId === match.playerAId) {
+      opponentForA[match.playerBId].wins += 1;
+      opponentForB[match.playerAId].losses += 1;
+    } else {
+      opponentForA[match.playerBId].losses += 1;
+      opponentForB[match.playerAId].wins += 1;
+    }
+  });
+
+  Object.values(statsMap).forEach(stats => {
+    stats.winPct = stats.matches ? Math.round((stats.wins / stats.matches) * 100) : 0;
+    stats.frameDiff = stats.framesFor - stats.framesAgainst;
+  });
+  return statsMap;
+}
+
+function validateMatch({ playerAId, playerBId, raceTo, framesA, framesB }) {
+  if (!playerAId || !playerBId) return 'Please choose two players.';
+  if (playerAId === playerBId) return 'Please choose two different players.';
+  if (raceTo < 1 || raceTo > 9) return 'Race to must be between 1 and 9 frames.';
+  if (framesA < 0 || framesB < 0) return 'Frame scores cannot be negative.';
+  if (framesA > 9 || framesB > 9) return 'Frames cannot exceed 9 for quick entry.';
+  const winningA = framesA === raceTo && framesB < raceTo;
+  const winningB = framesB === raceTo && framesA < raceTo;
+  if (!winningA && !winningB) return 'One player must reach the race-to value, the other must be lower.';
+  return '';
+}
+
+function saveMatch(data) {
+  const validation = validateMatch(data);
+  if (validation) {
+    elements.matchMessage.textContent = validation;
+    elements.matchMessage.style.color = 'var(--danger)';
+    return;
+  }
+  const winnerId = data.framesA > data.framesB ? data.playerAId : data.playerBId;
+  const match = {
+    id: uid(),
+    date: new Date().toISOString(),
+    playerAId: data.playerAId,
+    playerBId: data.playerBId,
+    raceTo: data.raceTo,
+    framesA: data.framesA,
+    framesB: data.framesB,
+    outcome: data.outcome,
+    note: data.note,
+    breaker: data.breaker,
+    winnerId
+  };
+  state.matches.unshift(match);
+  elements.matchForm.reset();
+  elements.matchMessage.textContent = 'Match saved!';
+  elements.matchMessage.style.color = 'var(--primary)';
+  persistState();
+  render();
+}
+
+function renderMatches() {
+  const template = document.getElementById('matchHistoryTemplate');
+  const clone = template.content.cloneNode(true);
+  const tbody = clone.querySelector('tbody');
+
+  const filtered = state.matches.filter(match => {
+    if (state.filters.playerId !== 'all') {
+      if (match.playerAId !== state.filters.playerId && match.playerBId !== state.filters.playerId) return false;
+    }
+    if (state.filters.from) {
+      if (new Date(match.date) < new Date(state.filters.from)) return false;
+    }
+    if (state.filters.to) {
+      const toDate = new Date(state.filters.to);
+      toDate.setHours(23, 59, 59, 999);
+      if (new Date(match.date) > toDate) return false;
+    }
+    return true;
+  });
+
+  if (!filtered.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = state.matches.length ? 'No matches match this filter.' : 'No matches recorded yet.';
+    elements.matchHistory.innerHTML = '';
+    elements.matchHistory.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach(match => {
+    const row = document.createElement('tr');
+    const dateCell = document.createElement('td');
+    dateCell.textContent = new Date(match.date).toLocaleString();
+
+    const playerA = getPlayerName(match.playerAId);
+    const playerB = getPlayerName(match.playerBId);
+    const fixtureCell = document.createElement('td');
+    fixtureCell.innerHTML = `<strong>${playerA}</strong> vs <strong>${playerB}</strong>`;
+    if (match.breaker === 'A') {
+      fixtureCell.innerHTML += ' <span class="badge note">A broke</span>';
+    } else if (match.breaker === 'B') {
+      fixtureCell.innerHTML += ' <span class="badge note">B broke</span>';
+    }
+
+    const scoreCell = document.createElement('td');
+    const winnerA = match.winnerId === match.playerAId;
+    const scoreHTML = `
+      <span class="badge ${winnerA ? 'win' : 'loss'}">${match.framesA}</span>
+      —
+      <span class="badge ${!winnerA ? 'win' : 'loss'}">${match.framesB}</span>
+    `;
+    scoreCell.innerHTML = scoreHTML;
+
+    const outcomeCell = document.createElement('td');
+    const noteText = [match.outcome, match.note].filter(Boolean).join(' · ');
+    outcomeCell.textContent = noteText || '—';
+
+    row.appendChild(dateCell);
+    row.appendChild(fixtureCell);
+    row.appendChild(scoreCell);
+    row.appendChild(outcomeCell);
+    tbody.appendChild(row);
+  });
+
+  elements.matchHistory.innerHTML = '';
+  elements.matchHistory.appendChild(clone);
+}
+
+function getPlayerName(id) {
+  const player = state.players.find(p => p.id === id);
+  if (!player) return 'Deleted player';
+  let label = player.name;
+  if (player.nickname) label += ` (${player.nickname})`;
+  if (player.active === false) label += ' (archived)';
+  return label;
+}
+
+function renderStats() {
+  if (!state.selectedPlayerId) {
+    elements.statsPanel.textContent = 'No player selected.';
+    return;
+  }
+  const player = state.players.find(p => p.id === state.selectedPlayerId);
+  if (!player) {
+    elements.statsPanel.textContent = 'Player not found.';
+    return;
+  }
+  const statsMap = calculateAllStats();
+  const stats = statsMap[player.id] || defaultStats();
+  const mostCommonWin = Object.entries(stats.outcomeWins).sort((a, b) => b[1] - a[1])[0];
+  const favouriteWin = mostCommonWin ? `${mostCommonWin[0]} (${mostCommonWin[1]})` : '—';
+
+  const panel = document.createElement('div');
+  panel.className = 'stats-panel';
+
+  const header = document.createElement('div');
+  header.innerHTML = `<div class="headline">${player.name}${player.nickname ? ` (${player.nickname})` : ''}</div>`;
+  if (player.active === false) {
+    const archived = document.createElement('span');
+    archived.className = 'badge note';
+    archived.textContent = 'Archived';
+    archived.style.marginLeft = '8px';
+    header.appendChild(archived);
+  }
+  panel.appendChild(header);
+
+  const grid = document.createElement('div');
+  grid.className = 'stats-grid';
+  const pairs = [
+    ['Matches', stats.matches],
+    ['Wins', stats.wins],
+    ['Losses', stats.losses],
+    ['Win %', stats.matches ? `${stats.winPct}%` : '—'],
+    ['Frames For', stats.framesFor],
+    ['Frames Against', stats.framesAgainst],
+    ['Frame Diff', stats.frameDiff],
+    ['Fav. win note', favouriteWin]
+  ];
+  pairs.forEach(([title, value]) => {
+    const card = document.createElement('div');
+    card.className = 'stat-card';
+    card.innerHTML = `<div class="stat-title">${title}</div><div class="stat-value">${value}</div>`;
+    grid.appendChild(card);
+  });
+  panel.appendChild(grid);
+
+  const headWrap = document.createElement('div');
+  headWrap.className = 'head-to-head';
+  headWrap.innerHTML = '<div class="stat-title">Head-to-head</div>';
+  const opponents = Object.entries(stats.headToHead);
+  if (!opponents.length) {
+    const none = document.createElement('p');
+    none.className = 'muted';
+    none.textContent = 'No matches yet.';
+    headWrap.appendChild(none);
+  } else {
+    opponents.sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses));
+    opponents.forEach(([opponentId, record]) => {
+      const line = document.createElement('div');
+      const name = getPlayerName(opponentId);
+      line.innerHTML = `<strong>${name}</strong>: ${record.wins}–${record.losses}`;
+      headWrap.appendChild(line);
+    });
+  }
+  panel.appendChild(headWrap);
+
+  elements.statsPanel.innerHTML = '';
+  elements.statsPanel.appendChild(panel);
+}
+
+function updateMatchFormAvailability() {
+  const activePlayers = state.players.filter(p => p.active !== false);
+  const enoughPlayers = activePlayers.length >= 2;
+  [elements.playerA, elements.playerB, elements.raceTo, elements.framesA, elements.framesB, elements.outcome, elements.note, elements.saveMatch]
+    .forEach(el => { if (el) el.disabled = !enoughPlayers; });
+  if (!enoughPlayers) {
+    elements.matchMessage.textContent = 'Roster unavailable. Reset data to restore the fixed four players.';
+    elements.matchMessage.style.color = 'var(--warning)';
+  } else {
+    elements.matchMessage.textContent = '';
+  }
+}
+
+function clearAllData() {
+  if (!confirm('Reset all players and matches? This cannot be undone.')) return;
+  state.players = [];
+  state.matches = [];
+  state.selectedPlayerId = null;
+  seedFixedRoster();
+  persistState();
+  render();
+}
+
+function attachEvents() {
+  elements.matchForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const formData = new FormData(elements.matchForm);
+    const payload = {
+      playerAId: elements.playerA.value,
+      playerBId: elements.playerB.value,
+      raceTo: Number(elements.raceTo.value),
+      framesA: Number(elements.framesA.value),
+      framesB: Number(elements.framesB.value),
+      outcome: elements.outcome.value,
+      note: elements.note.value.trim(),
+      breaker: formData.get('breaker') || ''
+    };
+    saveMatch(payload);
+  });
+
+  elements.filterPlayer.addEventListener('change', () => {
+    state.filters.playerId = elements.filterPlayer.value;
+    persistState();
+    renderMatches();
+  });
+  elements.filterFrom.addEventListener('change', () => {
+    state.filters.from = elements.filterFrom.value;
+    persistState();
+    renderMatches();
+  });
+  elements.filterTo.addEventListener('change', () => {
+    state.filters.to = elements.filterTo.value;
+    persistState();
+    renderMatches();
+  });
+  elements.clearFilters.addEventListener('click', () => {
+    state.filters = { playerId: 'all', from: '', to: '' };
+    persistState();
+    render();
+  });
+
+  elements.clearMatches.addEventListener('click', () => {
+    if (!state.matches.length) return;
+    if (!confirm('Clear all recorded matches?')) return;
+    state.matches = [];
+    persistState();
+    render();
+  });
+
+  elements.resetData.addEventListener('click', clearAllData);
+  elements.logoutBtn.addEventListener('click', handleLogout);
+  elements.loginForm.addEventListener('submit', handleLoginSubmit);
+
+  elements.statsSelect.addEventListener('change', () => {
+    state.selectedPlayerId = elements.statsSelect.value;
+    persistState();
+    renderStats();
+  });
+}
+
+function render() {
+  buildPlayerOptions(elements.playerA);
+  buildPlayerOptions(elements.playerB);
+  buildPlayerOptions(elements.filterPlayer, true);
+  buildPlayerOptions(elements.statsSelect);
+  if (!state.selectedPlayerId && state.players.length) {
+    state.selectedPlayerId = state.players[0].id;
+  }
+  if (elements.statsSelect && state.selectedPlayerId) {
+    elements.statsSelect.value = state.selectedPlayerId;
+  }
+  if (elements.filterPlayer) {
+    elements.filterPlayer.value = state.filters.playerId || 'all';
+  }
+  renderMatches();
+  renderStats();
+  updateMatchFormAvailability();
+  elements.filterFrom.value = state.filters.from || '';
+  elements.filterTo.value = state.filters.to || '';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initElements();
+  loadState();
+  if (seedFixedRoster()) {
+    persistState({ skipTimestamp: true });
+  }
+  loadAuth();
+  setAuthVisibility();
+  populateLoginChoices();
+  attachEvents();
+  render();
+  setSyncStatus('Data is saved locally on this device.');
+});
